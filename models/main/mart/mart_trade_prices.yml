@@ -1,0 +1,114 @@
+version: 2
+
+models:
+  - name: mart_trade_prices
+    description: 不動産取引価格・成約価格（全国）
+    config:
+      meta:
+        title: 不動産取引価格情報
+        published: true
+        license: "政府標準利用規約 第2.0版"
+        license_url: "https://www.kantei.go.jp/jp/singi/it2/densi/kettei/gl2_betten_1.pdf"
+        source_url: "https://www.reinfolib.mlit.go.jp/"
+        credit: >-
+          このサービスは、国土交通省の不動産情報ライブラリのAPI機能を使用していますが、
+          提供情報の最新性、正確性、完全性等が保証されたものではありません
+    columns:
+      - name: property_type
+        meta:
+          title: 種類
+          description: 宅地(土地と建物)、土地、中古マンション等、農地、林地
+      - name: region
+        meta:
+          title: 地域
+      - name: municipality_code
+        meta:
+          title: 市区町村コード
+      - name: prefecture
+        meta:
+          title: 都道府県名
+      - name: municipality
+        meta:
+          title: 市区町村名
+      - name: district_name
+        meta:
+          title: 地区名
+      - name: trade_price
+        meta:
+          title: 取引価格（総額）
+          description: 円
+      - name: price_per_unit
+        meta:
+          title: 坪単価
+      - name: floor_plan
+        meta:
+          title: 間取り
+      - name: area
+        meta:
+          title: 面積（平米）
+      - name: unit_price
+        meta:
+          title: 平米単価
+      - name: land_shape
+        meta:
+          title: 土地の形状
+      - name: frontage
+        meta:
+          title: 間口（m）
+      - name: total_floor_area
+        meta:
+          title: 延床面積（平米）
+      - name: building_year
+        meta:
+          title: 建築年
+      - name: structure
+        meta:
+          title: 建物の構造
+      - name: use_type
+        meta:
+          title: 用途
+      - name: purpose
+        meta:
+          title: 今後の利用目的
+      - name: direction
+        meta:
+          title: 前面道路の方位
+      - name: classification
+        meta:
+          title: 前面道路の種類
+      - name: breadth
+        meta:
+          title: 前面道路の幅員（m）
+      - name: city_planning
+        meta:
+          title: 都市計画
+      - name: coverage_ratio
+        meta:
+          title: 建ぺい率（%）
+      - name: floor_area_ratio
+        meta:
+          title: 容積率（%）
+      - name: period
+        meta:
+          title: 取引時期
+      - name: renovation
+        meta:
+          title: 改装
+      - name: remarks
+        meta:
+          title: 備考
+      - name: price_category
+        meta:
+          title: 価格区分
+      - name: district_code
+        meta:
+          title: 地区コード
+      - name: prefecture_code
+        meta:
+          title: 都道府県コード
+      - name: year
+        meta:
+          title: 取得年
+      - name: quarter
+        meta:
+          title: 取得四半期

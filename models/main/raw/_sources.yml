@@ -1,0 +1,9 @@
+version: 2
+
+sources:
+  - name: reinfolib_source
+    database: reinfolib
+    schema: _source
+    tables:
+      - name: trade_prices
+        description: 不動産情報ライブラリ XIT001 取引価格・成約価格データ

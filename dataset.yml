@@ -1,0 +1,10 @@
+title: "不動産情報ライブラリ"
+description: "国土交通省 不動産情報ライブラリAPIから取得した不動産価格情報（取引価格・成約価格）と市区町村マスタ"
+cover: "🏠"
+tags: ["不動産", "価格", "取引", "国土交通省"]
+public_url: "https://data.queria.io"
+s3_url: "{% if env_var('S3_BUCKET', '') %}s3://{{ env_var('S3_BUCKET') }}{% endif %}"
+
+schemas:
+  main:
+    title: "不動産価格情報"

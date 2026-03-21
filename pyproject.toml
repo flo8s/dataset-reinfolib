@@ -1,0 +1,9 @@
+[project]
+name = "dataset-reinfolib"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = ["fdl", "dbt-core>=1.11.2", "dbt-duckdb>=1.10.0", "reinfolib", "pyarrow"]
+
+[tool.uv.sources]
+fdl = { git = "https://github.com/flo8s/fdl", tag = "v0.2.0" }
+reinfolib = { git = "https://github.com/flo8s/reinfolib", tag = "v0.1.0" }

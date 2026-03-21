@@ -1,0 +1,70 @@
+version: 2
+
+models:
+  - name: raw_trade_prices
+    description: 不動産情報ライブラリ XIT001 取引価格・成約価格データ
+    columns:
+      - name: Type
+        description: 種類 (宅地、中古マンション等)
+      - name: Region
+        description: 地域 (商業地、住宅地等)
+      - name: MunicipalityCode
+        description: 市区町村コード
+      - name: Prefecture
+        description: 都道府県名
+      - name: Municipality
+        description: 市区町村名
+      - name: DistrictName
+        description: 地区名
+      - name: TradePrice
+        description: 取引価格（総額・円）
+      - name: PricePerUnit
+        description: 坪単価
+      - name: FloorPlan
+        description: 間取り
+      - name: Area
+        description: 面積（平方メートル）
+      - name: UnitPrice
+        description: 取引価格（平方メートル単価）
+      - name: LandShape
+        description: 土地の形状
+      - name: Frontage
+        description: 間口（m）
+      - name: TotalFloorArea
+        description: 延床面積（平方メートル）
+      - name: BuildingYear
+        description: 建築年
+      - name: Structure
+        description: 建物の構造
+      - name: Use
+        description: 用途
+      - name: Purpose
+        description: 今後の利用目的
+      - name: Direction
+        description: 前面道路の方位
+      - name: Classification
+        description: 前面道路の種類
+      - name: Breadth
+        description: 前面道路の幅員（m）
+      - name: CityPlanning
+        description: 都市計画
+      - name: CoverageRatio
+        description: 建ぺい率（%）
+      - name: FloorAreaRatio
+        description: 容積率（%）
+      - name: Period
+        description: 取引時期
+      - name: Renovation
+        description: 改装
+      - name: Remarks
+        description: 取引の事情等
+      - name: PriceCategory
+        description: 価格情報区分
+      - name: DistrictCode
+        description: 地区コード
+      - name: _area_code
+        description: 都道府県コード (取得時メタ)
+      - name: _year
+        description: 取得年 (取得時メタ)
+      - name: _quarter
+        description: 取得四半期 (取得時メタ)
