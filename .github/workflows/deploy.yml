@@ -31,6 +31,9 @@ jobs:
       - name: Run pipeline
         run: uv run fdl run default -- python pipeline.py
 
+      - name: Upload metadata
+        run: uv run python scripts/upload_metadata.py
+
       - name: Push catalog
         if: always()
         run: uv run fdl push default
