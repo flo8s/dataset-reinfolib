@@ -26,17 +26,14 @@ jobs:
       - run: uv sync
 
       - name: Pull catalog
-        run: uv run fdl pull origin
+        run: uv run fdl pull default
 
       - name: Run pipeline
-        run: uv run fdl run origin -- python pipeline.py
-
-      - name: Generate metadata
-        run: uv run fdl metadata
+        run: uv run fdl run default -- python pipeline.py
 
       - name: Push catalog
         if: always()
-        run: uv run fdl push origin
+        run: uv run fdl push default
 
       - name: Generate app token
         id: app-token

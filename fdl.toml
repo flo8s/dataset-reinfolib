@@ -1,7 +1,20 @@
 name = "reinfolib"
 
-[storage]
-public_url = "https://data.queria.io"
+[meta]
+title = "不動産情報ライブラリ"
+description = "国土交通省 不動産情報ライブラリAPIから取得した不動産価格情報（取引価格・成約価格）と市区町村マスタ"
+cover = "🏠"
+tags = ['不動産', '価格', '取引', '国土交通省']
+repository_url = "https://github.com/flo8s/dataset-reinfolib"
 
-[remotes]
-origin = "s3://${FDL_S3_BUCKET}"
+[meta.schemas]
+[meta.schemas.main]
+title = "不動産価格情報"
+
+
+[targets.default]
+url = "s3://${FDL_S3_BUCKET}"
+public_url = "https://data.queria.io"
+s3_endpoint = "${FDL_S3_ENDPOINT}"
+s3_access_key_id = "${FDL_S3_ACCESS_KEY_ID}"
+s3_secret_access_key = "${FDL_S3_SECRET_ACCESS_KEY}"

@@ -31,7 +31,7 @@ def main():
     all_quarters = _generate_quarters(START)
     logger.info("start: %d areas × %d quarters", len(areas), len(all_quarters))
 
-    with connect() as conn, ReinfolibClient(api_key) as client:
+    with connect(target_name="default") as conn, ReinfolibClient(api_key) as client:
         conn.execute("CREATE SCHEMA IF NOT EXISTS reinfolib._source")
         ingest_trade_prices(conn, client, areas=areas, quarters=all_quarters)
 
