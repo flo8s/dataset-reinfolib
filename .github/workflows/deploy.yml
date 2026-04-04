@@ -34,17 +34,11 @@ jobs:
       # fdl (frozen-ducklake) はベータ開発中のため、常に最新版を使用する
       - run: uv lock --upgrade-package frozen-ducklake && uv sync
 
-      - name: Pull catalog
-        run: uv run fdl pull default
-
-      - name: Run pipeline
-        run: uv run fdl run default -- python main.py
+      - name: Sync catalog
+        run: uv run fdl sync default
 
       - name: Upload artifacts
         run: uv run python shared/scripts/upload_artifacts.py
-
-      - name: Push catalog
-        run: uv run fdl push default
 
       - name: Generate app token
         id: app-token
