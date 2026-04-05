@@ -13,6 +13,8 @@ url = "~/.local/share/fdl"
 public_url = "http://localhost:4001"
 
 [meta]
+license = "政府標準利用規約 第2.0版"
+license_url = "https://www.reinfolib.mlit.go.jp/help/termsOfUse/"
 title = "不動産情報ライブラリ"
 description = "国土交通省 不動産情報ライブラリAPIから取得した不動産価格情報（取引価格・成約価格）と市区町村マスタ"
 cover = "🏠"

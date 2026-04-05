@@ -27,4 +27,4 @@
 
 ## ライセンス
 
-[政府標準利用規約 第2.0版](https://www.kantei.go.jp/jp/singi/it2/densi/kettei/gl2_betten_1.pdf)
+[政府標準利用規約 第2.0版](https://www.reinfolib.mlit.go.jp/help/termsOfUse/)

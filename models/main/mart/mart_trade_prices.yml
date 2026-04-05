@@ -7,8 +7,6 @@ models:
       meta:
         title: 不動産取引価格情報
         published: true
-        license: "政府標準利用規約 第2.0版"
-        license_url: "https://www.kantei.go.jp/jp/singi/it2/densi/kettei/gl2_betten_1.pdf"
         source_url: "https://www.reinfolib.mlit.go.jp/"
         credit: >-
           このサービスは、国土交通省の不動産情報ライブラリのAPI機能を使用していますが、
