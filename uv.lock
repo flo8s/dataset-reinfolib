@@ -382,16 +382,16 @@ wheels = [
 
 [[package]]
 name = "frozen-ducklake"
-version = "0.5.5"
+version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "boto3" },
     { name = "duckdb" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/eb/50/9ddfb32e601951e6a2b93128a3fae4585728c4b3ddc81aba8e777a6dc852/frozen_ducklake-0.5.5.tar.gz", hash = "sha256:dcb5ef39daab4b2d318b43534f418bd8d7f1a5004adb1a88fcdc51fc230d1c94", size = 76934, upload-time = "2026-04-02T05:03:29.03Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cb/70/552bbdaed51ad9a2173e7aa9b07c99a78f7958183fd360513d1c0a8398f7/frozen_ducklake-0.6.0.tar.gz", hash = "sha256:a817e4a03666c56003968b7740c94971dd9e8c0f391cb36fbeafe466ecaed1c9", size = 79929, upload-time = "2026-04-04T23:39:10.16Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4e/b4/f34277ba840bcb10e2e9d122230047388f6b5b40bade2f1723932090cceb/frozen_ducklake-0.5.5-py3-none-any.whl", hash = "sha256:06ae81196f0d2cb5ea66ae48417d9adad2311c0954341b921b3b4ed8294a2c5c", size = 17599, upload-time = "2026-04-02T05:03:27.575Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/7b/dea9f69fb7527d1c0689e50b4e9977c5d6ee854a68df347b91293c06345b/frozen_ducklake-0.6.0-py3-none-any.whl", hash = "sha256:468884d0756f9e13898d47577a8de01a359dd438adb2ebb88c7c713d4742d3cd", size = 19343, upload-time = "2026-04-04T23:39:08.658Z" },
 ]
 
 [[package]]
