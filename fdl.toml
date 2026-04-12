@@ -21,4 +21,6 @@ cover = "🏠"
 tags = ['不動産', '価格', '取引', '国土交通省']
 repository_url = "https://github.com/flo8s/dataset-reinfolib"
 schedule = "daily"
-schema.title = "不動産価格情報"
+
+[meta.schemas.main]
+title = "不動産価格情報"
