@@ -23,7 +23,7 @@ from reinfolib import ReinfolibClient
 
 SHARED_SCRIPTS = Path(__file__).resolve().parent / "shared" / "scripts"
 sys.path.insert(0, str(SHARED_SCRIPTS))
-from queria_config import load_target, require_motherduck_token  # noqa: E402
+from queria_config import load_target  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location(
     "snapshot_to_r2", SHARED_SCRIPTS / "snapshot-to-r2.py"
@@ -46,18 +46,22 @@ START: YearQuarter = (2005, 3)
 
 
 @contextmanager
-def _md_ducklake_connect(target_name: str) -> Generator[duckdb.DuckDBPyConnection]:
-    """Open a fresh DuckDB session with the dataset's MotherDuck DuckLake attached.
-
-    Replaces the legacy `fdl.ducklake.connect(...)` context manager.
-    """
+def _ducklake_connect(target_name: str) -> Generator[duckdb.DuckDBPyConnection]:
+    """Open a fresh DuckDB session with the dataset's Neon DuckLake attached."""
     target = load_target(target_name)
-    token = require_motherduck_token()
     conn = duckdb.connect(":memory:")
     try:
-        conn.execute("INSTALL motherduck; LOAD motherduck;")
-        conn.execute(f"SET motherduck_token = '{token}';")
-        conn.execute(f'ATTACH \'md:{target.motherduck_db}\' AS "{target.dataset}";')
+        conn.execute("INSTALL ducklake; LOAD ducklake;")
+        conn.execute("INSTALL postgres; LOAD postgres;")
+        conn.execute("INSTALL httpfs; LOAD httpfs;")
+        conn.execute(
+            "CREATE SECRET r2 (TYPE r2, KEY_ID ?, SECRET ?, ACCOUNT_ID ?)",
+            [target.s3_access_key_id, target.s3_secret_access_key, target.cf_account_id],
+        )
+        conn.execute(
+            f"ATTACH '{target.ducklake_uri}' AS \"{target.dataset}\" "
+            f"(DATA_PATH '{target.data_path}', META_SCHEMA '{target.meta_schema}')"
+        )
         yield conn
     finally:
         conn.close()
@@ -71,7 +75,7 @@ def main() -> None:
     all_quarters = _generate_quarters(START)
     logger.info("start: %d areas × %d quarters", len(areas), len(all_quarters))
 
-    with _md_ducklake_connect(target) as conn, ReinfolibClient(api_key) as client:
+    with _ducklake_connect(target) as conn, ReinfolibClient(api_key) as client:
         conn.execute("CREATE SCHEMA IF NOT EXISTS reinfolib._source")
         ingest_trade_prices(conn, client, areas=areas, quarters=all_quarters)
 
