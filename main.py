@@ -1,16 +1,36 @@
-"""不動産情報ライブラリ API 取得 + dbt ビルドパイプライン。"""
+"""不動産情報ライブラリ API 取得 + dbt build + snapshot pipeline.
 
+Snapshot must run in the SAME Python process as dbt build — see
+dataset-shared/README.md for the constraint detail.
+"""
+
+from __future__ import annotations
+
+import importlib.util
 import logging
 import os
+import sys
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import date
 from itertools import product
+from pathlib import Path
 
 import duckdb
 import pyarrow as pa
 from dbt.cli.main import dbtRunner
 from reinfolib import ReinfolibClient
 
-from fdl.ducklake import connect
+SHARED_SCRIPTS = Path(__file__).resolve().parent / "shared" / "scripts"
+sys.path.insert(0, str(SHARED_SCRIPTS))
+from queria_config import load_target  # noqa: E402
+
+_spec = importlib.util.spec_from_file_location(
+    "snapshot_to_r2", SHARED_SCRIPTS / "snapshot-to-r2.py"
+)
+assert _spec and _spec.loader
+snapshot_to_r2 = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(snapshot_to_r2)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -25,30 +45,51 @@ PRICE_CLASSIFICATION = "01"
 START: YearQuarter = (2005, 3)
 
 
-def main():
+@contextmanager
+def _ducklake_connect(target_name: str) -> Generator[duckdb.DuckDBPyConnection]:
+    """Open a fresh DuckDB session with the dataset's Neon DuckLake attached."""
+    target = load_target(target_name)
+    conn = duckdb.connect(":memory:")
+    try:
+        conn.execute("INSTALL ducklake; LOAD ducklake;")
+        conn.execute("INSTALL postgres; LOAD postgres;")
+        conn.execute("INSTALL httpfs; LOAD httpfs;")
+        conn.execute(
+            "CREATE SECRET r2 (TYPE r2, KEY_ID ?, SECRET ?, ACCOUNT_ID ?)",
+            [target.s3_access_key_id, target.s3_secret_access_key, target.cf_account_id],
+        )
+        conn.execute(
+            f"ATTACH '{target.ducklake_uri}' AS \"{target.dataset}\" "
+            f"(DATA_PATH '{target.data_path}', META_SCHEMA '{target.meta_schema}')"
+        )
+        yield conn
+    finally:
+        conn.close()
+
+
+def main() -> None:
+    target = os.environ.get("DBT_TARGET", sys.argv[1] if len(sys.argv) > 1 else "default")
+
     api_key = os.environ["REINFOLIB_API_KEY"]
     areas = [f"{a:02d}" for a in range(1, 48)]
     all_quarters = _generate_quarters(START)
     logger.info("start: %d areas × %d quarters", len(areas), len(all_quarters))
 
-    with connect(target_name="default") as conn, ReinfolibClient(api_key) as client:
+    with _ducklake_connect(target) as conn, ReinfolibClient(api_key) as client:
         conn.execute("CREATE SCHEMA IF NOT EXISTS reinfolib._source")
         ingest_trade_prices(conn, client, areas=areas, quarters=all_quarters)
 
-    logger.info("dbt deps")
-    result = dbtRunner().invoke(["deps"])
-    if not result.success:
-        raise SystemExit("dbt deps failed")
+    dbt = dbtRunner()
+    for cmd in (
+        ["deps"],
+        ["run", "--target", target],
+        ["docs", "generate", "--target", target],
+    ):
+        result = dbt.invoke(cmd)
+        if not result.success:
+            raise SystemExit(f"dbt {' '.join(cmd)} failed")
 
-    logger.info("dbt run")
-    result = dbtRunner().invoke(["run"])
-    if not result.success:
-        raise SystemExit("dbt run failed")
-
-    logger.info("dbt docs generate")
-    result = dbtRunner().invoke(["docs", "generate"])
-    if not result.success:
-        raise SystemExit("dbt docs generate failed")
+    snapshot_to_r2.run(target)
 
 
 def ingest_trade_prices(
@@ -66,7 +107,6 @@ def ingest_trade_prices(
 
     fetched = 0
     for area, (year, quarter) in product(areas, quarters):
-        # すでに取得済みの (area, year, quarter) はスキップ。ただし最新の四半期は再取得して更新する
         if (area, year, quarter) in completed and (year, quarter) != current:
             continue
 
@@ -81,19 +121,15 @@ def ingest_trade_prices(
             continue
         fetched += 1
 
-        # DELETE-INSERT の冪等性キーとしてリクエストパラメータを付与
         for row in rows:
             row["_area_code"] = area
             row["_year"] = year
             row["_quarter"] = quarter
 
         conn.register("_batch", pa.Table.from_pylist(rows))
-        # Arrow スキーマからテーブルを初回作成（データは入れない）
         conn.execute(
             f"CREATE TABLE IF NOT EXISTS {TABLE} AS SELECT * FROM _batch WITH NO DATA"
         )
-        # 同一パーティションの既存データを削除して再挿入（冪等性を保証）
-        # トランザクションで囲み、中断時にDELETEだけ残らないようにする
         conn.execute("BEGIN")
         conn.execute(
             f"DELETE FROM {TABLE} WHERE _area_code = ? AND _year = ? AND _quarter = ?",
@@ -111,7 +147,6 @@ def ingest_trade_prices(
 def _completed_pairs(
     conn: duckdb.DuckDBPyConnection,
 ) -> set[tuple[str, int, int]]:
-    """取得済みの (area_code, year, quarter) ペアを返す。"""
     try:
         return {
             (row[0], row[1], row[2])
@@ -127,7 +162,6 @@ def _generate_quarters(
     start: YearQuarter,
     end: YearQuarter | None = None,
 ) -> list[YearQuarter]:
-    """取得対象の四半期 (year, quarter) リストを生成する。"""
     if end is None:
         today = date.today()
         end = (today.year, (today.month - 1) // 3 + 1)

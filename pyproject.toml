@@ -2,4 +2,25 @@
 name = "dataset-reinfolib"
 version = "0.1.0"
 requires-python = ">=3.13"
-dependencies = ["frozen-ducklake>=0.10.1", "dbt-core>=1.11.2", "dbt-duckdb>=1.10.0", "reinfolib-client", "pyarrow"]
+dependencies = [
+    "dbt-core>=1.11.2",
+    "dbt-duckdb>=1.10.0",
+    "duckdb>=1.5.0,<1.5.3",
+    "boto3>=1.35",
+    "reinfolib-client",
+    "pyarrow",
+]
+
+[tool.queria]
+name = "reinfolib"
+title = "不動産情報ライブラリ"
+description = "国土交通省 不動産情報ライブラリAPIから取得した不動産価格情報（取引価格・成約価格）と市区町村マスタ"
+cover = "🏠"
+tags = ["不動産", "価格", "取引", "国土交通省"]
+license = "政府標準利用規約 第2.0版"
+license_url = "https://www.reinfolib.mlit.go.jp/help/termsOfUse/"
+repository_url = "https://github.com/flo8s/dataset-reinfolib"
+schedule = "daily"
+
+[tool.queria.schemas.main]
+title = "不動産価格情報"
