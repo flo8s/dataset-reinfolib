@@ -7,3 +7,5 @@ sources:
     tables:
       - name: trade_prices
         description: 不動産情報ライブラリ XIT001 取引価格・成約価格データ
+      - name: land_prices
+        description: 不動産情報ライブラリ XPT002 地価公示・地価調査ポイントデータ

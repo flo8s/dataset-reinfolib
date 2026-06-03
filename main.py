@@ -7,7 +7,9 @@ dataset-shared/README.md for the constraint detail.
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
+import math
 import os
 import sys
 from collections.abc import Generator
@@ -44,6 +46,34 @@ TABLE = "reinfolib._source.trade_prices"
 PRICE_CLASSIFICATION = "01"
 START: YearQuarter = (2005, 3)
 
+# -- XPT002: 地価公示・地価調査ポイント --
+LAND_TABLE = "reinfolib._source.land_prices"
+LAND_TILES_TABLE = "reinfolib._source.land_price_tiles"
+LAND_TILE_Z = 13
+LAND_START_YEAR = 1995
+
+# 日本の陸地（主要居住域）を覆う近似 BBox 群 (lon_min, lat_min, lon_max, lat_max)。
+# z=13 タイルへ展開し和集合を取ることで、外洋タイルの無駄打ちを抑える。
+LAND_BBOXES: list[tuple[float, float, float, float]] = [
+    (139.3, 41.3, 145.9, 45.6),  # 北海道
+    (139.4, 37.0, 141.7, 41.6),  # 東北
+    (136.0, 34.5, 140.9, 38.0),  # 関東・中部・北陸
+    (131.0, 33.8, 136.3, 36.0),  # 近畿・中国
+    (132.0, 32.7, 134.8, 34.5),  # 四国
+    (129.3, 31.0, 132.1, 34.0),  # 九州北部
+    (130.0, 30.9, 131.9, 32.2),  # 九州南部
+    (127.6, 26.0, 128.4, 26.9),  # 沖縄本島
+    (123.7, 24.0, 125.5, 24.9),  # 宮古・八重山
+    (129.2, 28.1, 129.8, 28.6),  # 奄美
+    (130.4, 30.2, 131.1, 30.8),  # 種子島・屋久島
+    (138.2, 37.8, 138.6, 38.4),  # 佐渡
+    (129.2, 34.0, 129.5, 34.7),  # 対馬
+    (129.6, 33.7, 129.8, 33.9),  # 壱岐
+    (128.6, 32.5, 129.2, 33.0),  # 五島
+    (133.0, 36.1, 133.4, 36.4),  # 隠岐
+    (142.0, 26.5, 142.3, 27.2),  # 小笠原
+]
+
 
 @contextmanager
 def _ducklake_connect(target_name: str) -> Generator[duckdb.DuckDBPyConnection]:
@@ -78,6 +108,15 @@ def main() -> None:
     with _ducklake_connect(target) as conn, ReinfolibClient(api_key) as client:
         conn.execute("CREATE SCHEMA IF NOT EXISTS reinfolib._source")
         ingest_trade_prices(conn, client, areas=areas, quarters=all_quarters)
+
+        land_latest = _latest_land_year(client)
+        land_years = (
+            [land_latest]
+            if os.environ.get("LAND_LATEST_YEAR_ONLY")
+            else list(range(LAND_START_YEAR, land_latest + 1))
+        )
+        tiles = discover_land_price_tiles(conn, client, year=land_latest)
+        ingest_land_prices(conn, client, tiles=tiles, years=land_years)
 
     dbt = dbtRunner()
     for cmd in (
@@ -171,6 +210,176 @@ def _generate_quarters(
         for q in range(1, 5)
         if start <= (y, q) <= end
     ]
+
+
+def _lonlat_to_tile(lon: float, lat: float, z: int) -> tuple[int, int]:
+    """経緯度を XYZ タイル座標へ変換する。"""
+    n = 2**z
+    x = int((lon + 180.0) / 360.0 * n)
+    y = int((1.0 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2.0 * n)
+    return x, y
+
+
+def _land_scan_tiles(z: int) -> list[tuple[int, int]]:
+    """陸地近似 BBox 群を z タイルへ展開した和集合 (昇順)。
+
+    環境変数 LAND_BBOX_OVERRIDE="lon0,lat0,lon1,lat1" で走査範囲を上書きできる
+    (検証用に範囲を狭める)。
+    """
+    override = os.environ.get("LAND_BBOX_OVERRIDE")
+    boxes = [tuple(float(v) for v in override.split(","))] if override else LAND_BBOXES
+    tiles: set[tuple[int, int]] = set()
+    for lon0, lat0, lon1, lat1 in boxes:
+        x0, y0 = _lonlat_to_tile(lon0, lat1, z)  # 北西
+        x1, y1 = _lonlat_to_tile(lon1, lat0, z)  # 南東
+        for x in range(min(x0, x1), max(x0, x1) + 1):
+            for y in range(min(y0, y1), max(y0, y1) + 1):
+                tiles.add((x, y))
+    return sorted(tiles)
+
+
+def _fetch_land_features(
+    client: ReinfolibClient, *, z: int, x: int, y: int, year: int
+) -> list[dict]:
+    """XPT002 を GeoJSON で取得し features を返す。
+
+    reinfolib-client の get_land_prices_point は必須の response_format を送らず
+    400 になるため、低レベル _get を直接呼ぶ。
+    """
+    resp = client._get(
+        "/XPT002",
+        {
+            "z": str(z),
+            "x": str(x),
+            "y": str(y),
+            "year": str(year),
+            "response_format": "geojson",
+        },
+    )
+    return resp.get("features", []) if isinstance(resp, dict) else []
+
+
+def _latest_land_year(client: ReinfolibClient) -> int:
+    """当年の地価公示が公開済みかを代表タイルで確認し、最新の有効年を返す。"""
+    px, py = _lonlat_to_tile(139.767, 35.681, LAND_TILE_Z)  # 東京駅周辺
+    current = date.today().year
+    for year in (current, current - 1):
+        if _fetch_land_features(client, z=LAND_TILE_Z, x=px, y=py, year=year):
+            return year
+    return current - 1
+
+
+def discover_land_price_tiles(
+    conn: duckdb.DuckDBPyConnection, client: ReinfolibClient, *, year: int
+) -> list[tuple[int, int]]:
+    """フェーズ0: 最新年で陸地タイルを走査し、地点が存在するタイルを記録・返す。
+
+    一度記録した有効タイルは再利用する (過去年バックフィルや再ビルドを軽くする)。
+    """
+    known = _known_land_tiles(conn)
+    if known:
+        logger.info("land tiles: reuse %d known tiles", len(known))
+        return known
+
+    scan = _land_scan_tiles(LAND_TILE_Z)
+    logger.info("land tiles: scanning %d candidate tiles (year=%d)", len(scan), year)
+    found: list[tuple[int, int]] = []
+    for i, (x, y) in enumerate(scan):
+        if _fetch_land_features(client, z=LAND_TILE_Z, x=x, y=y, year=year):
+            found.append((x, y))
+        if (i + 1) % 1000 == 0:
+            logger.info("  scanned %d/%d, found %d", i + 1, len(scan), len(found))
+
+    rows = [{"z": LAND_TILE_Z, "x": x, "y": y} for x, y in found]
+    conn.register("_tiles", pa.Table.from_pylist(rows))
+    conn.execute(f"CREATE OR REPLACE TABLE {LAND_TILES_TABLE} AS SELECT * FROM _tiles")
+    conn.unregister("_tiles")
+    logger.info("land tiles: %d tiles have points", len(found))
+    return found
+
+
+def _known_land_tiles(conn: duckdb.DuckDBPyConnection) -> list[tuple[int, int]]:
+    try:
+        return [
+            (r[0], r[1])
+            for r in conn.execute(
+                f"SELECT x, y FROM {LAND_TILES_TABLE} ORDER BY x, y"
+            ).fetchall()
+        ]
+    except duckdb.CatalogException:
+        return []
+
+
+def ingest_land_prices(
+    conn: duckdb.DuckDBPyConnection,
+    client: ReinfolibClient,
+    *,
+    tiles: list[tuple[int, int]],
+    years: list[int],
+) -> None:
+    """フェーズ1: 有効タイル×年で地価公示・地価調査ポイントを取得する。"""
+    if not tiles:
+        logger.warning("land prices: no tiles to ingest")
+        return
+
+    latest = years[-1]
+    completed = _completed_land_pairs(conn)
+    total = len(tiles) * len(years)
+    logger.info("land prices: %d completed / %d (tile,year)", len(completed), total)
+
+    fetched = 0
+    for (x, y), year in product(tiles, years):
+        if (x, y, year) in completed and year != latest:
+            continue
+        feats = _fetch_land_features(client, z=LAND_TILE_Z, x=x, y=y, year=year)
+        if not feats:
+            continue
+        fetched += 1
+
+        rows = []
+        for f in feats:
+            row = dict(f.get("properties", {}))
+            row.pop("_id", None)
+            row.pop("_index", None)
+            geom = f.get("geometry") or {}
+            coords = geom.get("coordinates") or [None, None]
+            row["longitude"] = coords[0]
+            row["latitude"] = coords[1]
+            row["geometry"] = json.dumps(geom, ensure_ascii=False)
+            row["_z"] = LAND_TILE_Z
+            row["_x"] = x
+            row["_y"] = y
+            row["_year"] = year
+            rows.append(row)
+
+        conn.register("_batch", pa.Table.from_pylist(rows))
+        conn.execute(
+            f"CREATE TABLE IF NOT EXISTS {LAND_TABLE} AS SELECT * FROM _batch WITH NO DATA"
+        )
+        conn.execute("BEGIN")
+        conn.execute(
+            f"DELETE FROM {LAND_TABLE} WHERE _x = ? AND _y = ? AND _year = ?",
+            [x, y, year],
+        )
+        conn.execute(f"INSERT INTO {LAND_TABLE} SELECT * FROM _batch")
+        conn.execute("COMMIT")
+        conn.unregister("_batch")
+
+    logger.info("land prices ingest done: %d (tile,year) fetched", fetched)
+
+
+def _completed_land_pairs(
+    conn: duckdb.DuckDBPyConnection,
+) -> set[tuple[int, int, int]]:
+    try:
+        return {
+            (r[0], r[1], r[2])
+            for r in conn.execute(
+                f"SELECT DISTINCT _x, _y, _year FROM {LAND_TABLE}"
+            ).fetchall()
+        }
+    except duckdb.CatalogException:
+        return set()
 
 
 if __name__ == "__main__":

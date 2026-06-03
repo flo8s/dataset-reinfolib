@@ -1,0 +1,134 @@
+version: 2
+
+models:
+  - name: mart_land_prices
+    description: 地価公示・地価調査ポイント（全国）
+    config:
+      meta:
+        title: 地価公示・地価調査ポイント
+        published: true
+        source_url: "https://www.reinfolib.mlit.go.jp/"
+        credit: >-
+          このサービスは、国土交通省の不動産情報ライブラリのAPI機能を使用していますが、
+          提供情報の最新性、正確性、完全性等が保証されたものではありません
+    columns:
+      - name: point_id
+        meta:
+          title: ポイントID
+      - name: land_price_type
+        meta:
+          title: 地価情報区分コード
+          description: 0=地価公示、1=地価調査
+      - name: land_price_type_name
+        meta:
+          title: 地価情報区分
+      - name: year
+        meta:
+          title: 価格時点年
+      - name: standard_lot_number
+        meta:
+          title: 標準地・基準地番号
+      - name: prefecture_code
+        meta:
+          title: 都道府県コード
+      - name: prefecture_name
+        meta:
+          title: 都道府県名
+      - name: city_code
+        meta:
+          title: 市区町村コード
+      - name: municipality_name
+        meta:
+          title: 市区町村名
+      - name: place_name
+        meta:
+          title: 地名
+      - name: location
+        meta:
+          title: 所在地
+      - name: current_price
+        meta:
+          title: 当年価格
+          description: 円/㎡
+      - name: last_year_price
+        meta:
+          title: 前年価格
+          description: 円/㎡
+      - name: change_rate
+        meta:
+          title: 対前年変動率
+          description: "%"
+      - name: cadastral_area
+        meta:
+          title: 地積
+          description: ㎡
+      - name: use_category
+        meta:
+          title: 用途区分
+          description: 住宅地、商業地、工業地等
+      - name: area_division
+        meta:
+          title: 区域区分
+          description: 市街化区域、市街化調整区域等
+      - name: usage_status
+        meta:
+          title: 利用現況
+      - name: surrounding_usage
+        meta:
+          title: 周辺の土地の利用現況
+      - name: building_structure
+        meta:
+          title: 建物構造
+      - name: ground_floors
+        meta:
+          title: 地上階数
+      - name: underground_floors
+        meta:
+          title: 地下階数
+      - name: nearest_station
+        meta:
+          title: 最寄駅名
+      - name: station_distance
+        meta:
+          title: 最寄駅までの距離
+      - name: front_road_condition
+        meta:
+          title: 前面道路の状況
+      - name: front_road_width
+        meta:
+          title: 前面道路の幅員
+      - name: zoning_use_category
+        meta:
+          title: 用途地域
+      - name: building_coverage_ratio
+        meta:
+          title: 建蔽率
+          description: "%"
+      - name: floor_area_ratio
+        meta:
+          title: 容積率
+          description: "%"
+      - name: fireproof_category
+        meta:
+          title: 防火・準防火地域区分
+      - name: gas_supply_availability
+        meta:
+          title: ガス供給の有無
+      - name: water_supply_availability
+        meta:
+          title: 水道供給の有無
+      - name: sewer_supply_availability
+        meta:
+          title: 下水道供給の有無
+      - name: longitude
+        meta:
+          title: 経度
+          description: EPSG:6668
+      - name: latitude
+        meta:
+          title: 緯度
+          description: EPSG:6668
+      - name: geom
+        meta:
+          title: 座標
+          description: ポイントジオメトリ (WKB)
