@@ -68,3 +68,77 @@ models:
         description: 取得年 (取得時メタ)
       - name: _quarter
         description: 取得四半期 (取得時メタ)
+
+  - name: raw_land_prices
+    description: 不動産情報ライブラリ XPT002 地価公示・地価調査ポイントデータ
+    columns:
+      - name: point_id
+        description: 標準地・基準地のポイント ID
+      - name: land_price_type
+        description: 地価情報区分 (0=地価公示、1=地価調査)
+      - name: standard_lot_number_ja
+        description: 標準地・基準地番号
+      - name: prefecture_code
+        description: 都道府県コード
+      - name: prefecture_name_ja
+        description: 都道府県名
+      - name: city_code
+        description: 市区町村コード
+      - name: ward_town_village_name_ja
+        description: 市区町村名
+      - name: place_name_ja
+        description: 地名
+      - name: location
+        description: 所在地
+      - name: u_current_years_price_ja
+        description: 当年価格 (円/㎡。カンマ・単位付き文字列)
+      - name: last_years_price
+        description: 前年価格 (円/㎡)
+      - name: year_on_year_change_rate
+        description: 対前年変動率 (%)
+      - name: u_cadastral_ja
+        description: 地積 (㎡。単位付き文字列)
+      - name: use_category_name_ja
+        description: 用途区分 (住宅地、商業地等)
+      - name: area_division_name_ja
+        description: 区域区分 (市街化区域等)
+      - name: usage_status_name_ja
+        description: 利用現況
+      - name: current_usage_status_of_surrounding_land_name_ja
+        description: 周辺の土地の利用現況
+      - name: building_structure_name_ja
+        description: 建物構造
+      - name: nearest_station_name_ja
+        description: 最寄駅名
+      - name: u_road_distance_to_nearest_station_name_ja
+        description: 最寄駅までの距離
+      - name: front_road_condition
+        description: 前面道路の状況
+      - name: regulations_use_category_name_ja
+        description: 用途地域
+      - name: u_regulations_building_coverage_ratio_ja
+        description: 建蔽率 (%。単位付き文字列)
+      - name: u_regulations_floor_area_ratio_ja
+        description: 容積率 (%。単位付き文字列)
+      - name: regulations_fireproof_name_ja
+        description: 防火・準防火地域区分
+      - name: gas_supply_availability
+        description: ガス供給の有無
+      - name: water_supply_availability
+        description: 水道供給の有無
+      - name: sewer_supply_availability
+        description: 下水道供給の有無
+      - name: longitude
+        description: 経度 (EPSG:6668)
+      - name: latitude
+        description: 緯度 (EPSG:6668)
+      - name: geometry
+        description: GeoJSON geometry (Point) 文字列
+      - name: _year
+        description: 価格時点年 (取得時メタ)
+      - name: _x
+        description: タイル X 座標 (取得時メタ)
+      - name: _y
+        description: タイル Y 座標 (取得時メタ)
+      - name: _z
+        description: タイルズームレベル (取得時メタ)

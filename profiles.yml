@@ -9,6 +9,7 @@ reinfolib:
         - httpfs
         - postgres
         - ducklake
+        - spatial
       secrets:
         - type: r2
           key_id: "{{ env_var('QUERIA_S3_ACCESS_KEY_ID', '') }}"
@@ -28,6 +29,7 @@ reinfolib:
         - httpfs
         - postgres
         - ducklake
+        - spatial
       secrets:
         - type: r2
           key_id: "{{ env_var('QUERIA_S3_ACCESS_KEY_ID', '') }}"

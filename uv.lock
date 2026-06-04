@@ -191,7 +191,7 @@ requires-dist = [
     { name = "dbt-duckdb", specifier = ">=1.10.0" },
     { name = "duckdb", specifier = ">=1.5.0,<1.5.3" },
     { name = "pyarrow" },
-    { name = "reinfolib-client" },
+    { name = "reinfolib-client", specifier = ">=0.2.0" },
 ]
 
 [[package]]
@@ -830,14 +830,14 @@ wheels = [
 
 [[package]]
 name = "reinfolib-client"
-version = "0.1.0"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5a/f5/adca30d919b816865ba2d5207859c52b73f40f0debaa7c2d450f51d84585/reinfolib_client-0.1.0.tar.gz", hash = "sha256:73e3eafbca903b94b1237cde1a9634ae3cfa686ac3bee0d087dfd8fd5defe1d0", size = 3208, upload-time = "2026-03-21T22:12:17.754Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4f/5d/513a14daefaf5b602e3381e1558823ee3b52cd6223327c82180f7ef30486/reinfolib_client-0.2.0.tar.gz", hash = "sha256:6127f2d2b79d3cc6cd7cfefec03decd305b3def64101c2b18f107d9ba9e1996b", size = 3727, upload-time = "2026-06-04T00:55:14.552Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b2/91/23fa654e0ebe54a0f6fbcde9c769fdd2af7f8084116ade6722147d6cce66/reinfolib_client-0.1.0-py3-none-any.whl", hash = "sha256:7031ee2ec3905b8a3294245265ccda3d7219e5852d434beee7f6f6a2f13a9a99", size = 4080, upload-time = "2026-03-21T22:12:16.634Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/6d/6632e70fb8cb9c6216c0a1f080e04cb17ed3093a71b9572ee392dd4f74c1/reinfolib_client-0.2.0-py3-none-any.whl", hash = "sha256:f22610e68a04932c34fb33472f47e12e6127c2e366f2e03358661cf3b9cc06e5", size = 4104, upload-time = "2026-06-04T00:55:13.455Z" },
 ]
 
 [[package]]
