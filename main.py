@@ -241,21 +241,8 @@ def _land_scan_tiles(z: int) -> list[tuple[int, int]]:
 def _fetch_land_features(
     client: ReinfolibClient, *, z: int, x: int, y: int, year: int
 ) -> list[dict]:
-    """XPT002 を GeoJSON で取得し features を返す。
-
-    reinfolib-client の get_land_prices_point は必須の response_format を送らず
-    400 になるため、低レベル _get を直接呼ぶ。
-    """
-    resp = client._get(
-        "/XPT002",
-        {
-            "z": str(z),
-            "x": str(x),
-            "y": str(y),
-            "year": str(year),
-            "response_format": "geojson",
-        },
-    )
+    """XPT002 を GeoJSON で取得し features を返す。"""
+    resp = client.get_land_prices_point(z=z, x=x, y=y, year=year)
     return resp.get("features", []) if isinstance(resp, dict) else []
 
 

@@ -7,7 +7,7 @@ dependencies = [
     "dbt-duckdb>=1.10.0",
     "duckdb>=1.5.0,<1.5.3",
     "boto3>=1.35",
-    "reinfolib-client",
+    "reinfolib-client>=0.2.0",
     "pyarrow",
 ]
 
