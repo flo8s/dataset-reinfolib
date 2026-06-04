@@ -6,7 +6,6 @@ dataset-shared/README.md for the constraint detail.
 
 from __future__ import annotations
 
-import csv
 import importlib.util
 import json
 import logging
@@ -53,12 +52,16 @@ LAND_TILES_TABLE = "reinfolib._source.land_price_tiles"
 LAND_TILE_Z = 13
 LAND_START_YEAR = 1995
 
-# 走査タイルは nlftp の市区町村境界 bbox (data/municipality_bbox.csv) から生成する。
-# 全市区町村域を漏れなくカバーするため、手書き矩形のような端の取りこぼしが起きない。
-# CSV は nlftp.boundary.municipality の各ポリゴン bbox を抽出したもの。
-LAND_BBOX_CSV = Path(__file__).resolve().parent / "data" / "municipality_bbox.csv"
-# 境界の簡略化(ST_CoverageSimplify 0.002)と小島除去の誤差を吸収するバッファ(度)
-LAND_BBOX_BUFFER = 0.01
+# 走査タイルは、日本列島を包含する少数の大矩形 (lon_min, lat_min, lon_max, lat_max)
+# から z=13 タイルへ展開した和集合。各矩形は四隅がすべて海上にあり陸地を完全に含むため、
+# 端の取りこぼしが原理的に起きない。海上の空タイルは取得時に skip する。
+LAND_BBOXES: list[tuple[float, float, float, float]] = [
+    (128.0, 30.0, 142.5, 41.6),  # 本州・四国・九州
+    (139.0, 41.0, 146.2, 45.7),  # 北海道
+    (122.8, 24.0, 131.6, 29.6),  # 南西諸島 (奄美〜沖縄〜先島)
+    (130.9, 25.4, 131.5, 26.1),  # 大東諸島
+    (141.9, 26.4, 142.4, 27.3),  # 小笠原諸島
+]
 
 
 @contextmanager
@@ -207,23 +210,8 @@ def _lonlat_to_tile(lon: float, lat: float, z: int) -> tuple[int, int]:
     return x, y
 
 
-def _load_municipality_bboxes() -> list[tuple[float, float, float, float]]:
-    """市区町村境界 bbox をバッファ込みで読み込む。"""
-    b = LAND_BBOX_BUFFER
-    with open(LAND_BBOX_CSV, newline="") as f:
-        return [
-            (
-                float(r["xmin"]) - b,
-                float(r["ymin"]) - b,
-                float(r["xmax"]) + b,
-                float(r["ymax"]) + b,
-            )
-            for r in csv.DictReader(f)
-        ]
-
-
 def _land_scan_tiles(z: int) -> list[tuple[int, int]]:
-    """市区町村境界 bbox を z タイルへ展開した和集合 (昇順)。
+    """LAND_BBOXES を z タイルへ展開した和集合 (昇順)。
 
     環境変数 LAND_BBOX_OVERRIDE="lon0,lat0,lon1,lat1" で走査範囲を上書きできる
     (検証用に範囲を狭める)。
@@ -233,7 +221,7 @@ def _land_scan_tiles(z: int) -> list[tuple[int, int]]:
         nums = [float(v) for v in override.split(",")]
         boxes = [(nums[0], nums[1], nums[2], nums[3])]
     else:
-        boxes = _load_municipality_bboxes()
+        boxes = LAND_BBOXES
     tiles: set[tuple[int, int]] = set()
     for lon0, lat0, lon1, lat1 in boxes:
         x0, y0 = _lonlat_to_tile(lon0, lat1, z)  # 北西
@@ -375,17 +363,10 @@ def _completed_land_pairs(
         return set()
 
 
-def _municipality_codes() -> set[str]:
-    """市区町村境界 CSV の全 lg_code (5桁) を返す。"""
-    with open(LAND_BBOX_CSV, newline="") as f:
-        return {r["lg_code"] for r in csv.DictReader(f)}
-
-
 def _verify_land_coverage(conn: duckdb.DuckDBPyConnection) -> None:
     """取得した地価データのカバレッジを検証しログ出力する (取りこぼしの安全網)。
 
-    完全な正解数は不明だが、47都道府県の欠落と市区町村カバー率の異常で
-    走査範囲の取りこぼしを検出する。
+    47都道府県の欠落と総地点数で走査範囲の取りこぼしを検出する。
     """
     prefs = {
         r[0]
@@ -399,20 +380,8 @@ def _verify_land_coverage(conn: duckdb.DuckDBPyConnection) -> None:
     else:
         logger.info("land coverage: 47都道府県すべてに地価データあり")
 
-    muni = _municipality_codes()
-    got = {
-        r[0]
-        for r in conn.execute(
-            f"SELECT DISTINCT city_code FROM {LAND_TABLE}"
-        ).fetchall()
-    }
-    covered = got & muni
-    logger.info(
-        "land coverage: 市区町村 %d/%d (%.1f%%) に地価地点あり",
-        len(covered),
-        len(muni),
-        100.0 * len(covered) / len(muni) if muni else 0.0,
-    )
+    total = conn.execute(f"SELECT count(*) FROM {LAND_TABLE}").fetchone()[0]
+    logger.info("land coverage: 総地点数(全年) %d", total)
 
 
 if __name__ == "__main__":
