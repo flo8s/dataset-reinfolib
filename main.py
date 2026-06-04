@@ -49,6 +49,7 @@ START: YearQuarter = (2005, 3)
 # -- XPT002: 地価公示・地価調査ポイント --
 LAND_TABLE = "reinfolib._source.land_prices"
 LAND_TILES_TABLE = "reinfolib._source.land_price_tiles"
+LAND_SCAN_PROGRESS = "reinfolib._source.land_scan_progress"
 LAND_TILE_Z = 13
 LAND_START_YEAR = 1995
 
@@ -253,30 +254,99 @@ def _latest_land_year(client: ReinfolibClient) -> int:
 def discover_land_price_tiles(
     conn: duckdb.DuckDBPyConnection, client: ReinfolibClient, *, year: int
 ) -> list[tuple[int, int]]:
-    """フェーズ0: 最新年で陸地タイルを走査し、地点が存在するタイルを記録・返す。
+    """フェーズ0: 陸地タイルを走査し、地点が存在するタイルを記録・返す。
 
-    一度記録した有効タイルは再利用する (過去年バックフィルや再ビルドを軽くする)。
+    走査進捗と発見タイルを 1000 タイルごとに永続化し、中断後は続きから再開する。
+    一度完了した有効タイルは再利用する (過去年バックフィルや再ビルドを軽くする)。
+    LAND_BBOX_OVERRIDE 指定時 (検証用) は永続化せずメモリで完結する。
     """
-    known = _known_land_tiles(conn)
-    if known:
-        logger.info("land tiles: reuse %d known tiles", len(known))
+    scan = _land_scan_tiles(LAND_TILE_Z)
+
+    if os.environ.get("LAND_BBOX_OVERRIDE"):
+        found = [
+            (x, y)
+            for x, y in scan
+            if _fetch_land_features(client, z=LAND_TILE_Z, x=x, y=y, year=year)
+        ]
+        logger.info(
+            "land tiles (override): %d/%d tiles have points", len(found), len(scan)
+        )
+        return found
+
+    _ensure_tile_tables(conn)
+    scanned, total = _scan_progress(conn)
+    if total != len(scan):
+        # 走査範囲が変わった or 初回 → やり直し
+        _reset_scan(conn)
+        scanned = 0
+    if scanned >= len(scan):
+        known = _known_land_tiles(conn)
+        logger.info("land tiles: reuse %d known tiles (scan complete)", len(known))
         return known
 
-    scan = _land_scan_tiles(LAND_TILE_Z)
-    logger.info("land tiles: scanning %d candidate tiles (year=%d)", len(scan), year)
-    found: list[tuple[int, int]] = []
-    for i, (x, y) in enumerate(scan):
+    logger.info(
+        "land tiles: scanning %d candidate tiles from %d (year=%d)",
+        len(scan),
+        scanned,
+        year,
+    )
+    batch: list[tuple[int, int]] = []
+    for i in range(scanned, len(scan)):
+        x, y = scan[i]
         if _fetch_land_features(client, z=LAND_TILE_Z, x=x, y=y, year=year):
-            found.append((x, y))
+            batch.append((x, y))
         if (i + 1) % 1000 == 0:
-            logger.info("  scanned %d/%d, found %d", i + 1, len(scan), len(found))
+            _checkpoint_tiles(conn, batch, i + 1, len(scan))
+            batch = []
+            n = conn.execute(f"SELECT count(*) FROM {LAND_TILES_TABLE}").fetchone()[0]
+            logger.info("  scanned %d/%d, found %d", i + 1, len(scan), n)
+    _checkpoint_tiles(conn, batch, len(scan), len(scan))
 
-    rows = [{"z": LAND_TILE_Z, "x": x, "y": y} for x, y in found]
-    conn.register("_tiles", pa.Table.from_pylist(rows))
-    conn.execute(f"CREATE OR REPLACE TABLE {LAND_TILES_TABLE} AS SELECT * FROM _tiles")
-    conn.unregister("_tiles")
-    logger.info("land tiles: %d tiles have points", len(found))
-    return found
+    known = _known_land_tiles(conn)
+    logger.info("land tiles: %d tiles have points", len(known))
+    return known
+
+
+def _ensure_tile_tables(conn: duckdb.DuckDBPyConnection) -> None:
+    conn.execute(
+        f"CREATE TABLE IF NOT EXISTS {LAND_TILES_TABLE} (z INTEGER, x INTEGER, y INTEGER)"
+    )
+    conn.execute(
+        f"CREATE TABLE IF NOT EXISTS {LAND_SCAN_PROGRESS} (scanned BIGINT, total BIGINT)"
+    )
+
+
+def _scan_progress(conn: duckdb.DuckDBPyConnection) -> tuple[int, int]:
+    try:
+        row = conn.execute(
+            f"SELECT scanned, total FROM {LAND_SCAN_PROGRESS} LIMIT 1"
+        ).fetchone()
+    except duckdb.CatalogException:
+        return 0, 0
+    return (int(row[0]), int(row[1])) if row else (0, 0)
+
+
+def _reset_scan(conn: duckdb.DuckDBPyConnection) -> None:
+    conn.execute(f"DELETE FROM {LAND_TILES_TABLE}")
+    conn.execute(f"DELETE FROM {LAND_SCAN_PROGRESS}")
+
+
+def _checkpoint_tiles(
+    conn: duckdb.DuckDBPyConnection,
+    found: list[tuple[int, int]],
+    scanned: int,
+    total: int,
+) -> None:
+    """発見タイルの追記と走査進捗の更新をまとめて永続化する。"""
+    conn.execute("BEGIN")
+    if found:
+        rows = [{"z": LAND_TILE_Z, "x": x, "y": y} for x, y in found]
+        conn.register("_tiles", pa.Table.from_pylist(rows))
+        conn.execute(f"INSERT INTO {LAND_TILES_TABLE} SELECT * FROM _tiles")
+        conn.unregister("_tiles")
+    conn.execute(f"DELETE FROM {LAND_SCAN_PROGRESS}")
+    conn.execute(f"INSERT INTO {LAND_SCAN_PROGRESS} VALUES (?, ?)", [scanned, total])
+    conn.execute("COMMIT")
 
 
 def _known_land_tiles(conn: duckdb.DuckDBPyConnection) -> list[tuple[int, int]]:
