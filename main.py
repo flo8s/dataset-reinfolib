@@ -100,12 +100,17 @@ def main() -> None:
         ingest_trade_prices(conn, client, areas=areas, quarters=all_quarters)
 
         land_latest = _latest_land_year(client)
-        land_years = (
-            [land_latest]
-            if os.environ.get("LAND_LATEST_YEAR_ONLY")
-            else list(range(LAND_START_YEAR, land_latest + 1))
-        )
-        tiles = discover_land_price_tiles(conn, client, year=land_latest)
+        discover_land_price_tiles(conn, client, year=land_latest)
+
+    # フェーズ0 で長時間保持した接続を一度閉じ、フェーズ1 は新しい接続で開始する
+    # (DuckLake バックエンドの idle 接続が枯渇するのを避ける)
+    land_years = (
+        [land_latest]
+        if os.environ.get("LAND_LATEST_YEAR_ONLY")
+        else list(range(LAND_START_YEAR, land_latest + 1))
+    )
+    with _ducklake_connect(target) as conn, ReinfolibClient(api_key) as client:
+        tiles = _known_land_tiles(conn)
         ingest_land_prices(conn, client, tiles=tiles, years=land_years)
         _verify_land_coverage(conn)
 
@@ -368,65 +373,91 @@ def ingest_land_prices(
     tiles: list[tuple[int, int]],
     years: list[int],
 ) -> None:
-    """フェーズ1: 有効タイル×年で地価公示・地価調査ポイントを取得する。"""
+    """フェーズ1: 有効タイルごとに対象年をまとめて取得する。
+
+    タイル単位で全対象年を取得し 1 トランザクションで書き込むことで、DuckLake
+    バックエンドへのトランザクション数を抑える (接続枯渇対策)。再開単位はタイル:
+    land_prices に既にあるタイルはスキップする (LAND_LATEST_YEAR_ONLY 時は
+    最新年を毎回更新するためスキップしない)。
+    """
     if not tiles:
         logger.warning("land prices: no tiles to ingest")
         return
 
-    latest = years[-1]
-    completed = _completed_land_pairs(conn)
-    total = len(tiles) * len(years)
-    logger.info("land prices: %d completed / %d (tile,year)", len(completed), total)
+    latest_only = bool(os.environ.get("LAND_LATEST_YEAR_ONLY"))
+    completed = set() if latest_only else _ingested_land_tiles(conn)
+    total = len(tiles)
+    logger.info("land prices: %d/%d tiles already ingested", len(completed), total)
 
     fetched = 0
-    for (x, y), year in product(tiles, years):
-        if (x, y, year) in completed and year != latest:
+    for idx, (x, y) in enumerate(tiles):
+        if (x, y) in completed:
             continue
-        feats = _fetch_land_features(client, z=LAND_TILE_Z, x=x, y=y, year=year)
-        if not feats:
-            continue
+        rows: list[dict] = []
+        for year in years:
+            for f in _fetch_land_features(client, z=LAND_TILE_Z, x=x, y=y, year=year):
+                rows.append(_feature_to_row(f, x, y, year))
+        _write_tile_rows(conn, x, y, years, rows)
         fetched += 1
+        if (idx + 1) % 100 == 0:
+            n = conn.execute(f"SELECT count(*) FROM {LAND_TABLE}").fetchone()[0]
+            logger.info("  tiles %d/%d, rows %d", idx + 1, total, n)
 
-        rows = []
-        for f in feats:
-            row = dict(f.get("properties", {}))
-            row.pop("_id", None)
-            row.pop("_index", None)
-            geom = f.get("geometry") or {}
-            coords = geom.get("coordinates") or [None, None]
-            row["longitude"] = coords[0]
-            row["latitude"] = coords[1]
-            row["geometry"] = json.dumps(geom, ensure_ascii=False)
-            row["_z"] = LAND_TILE_Z
-            row["_x"] = x
-            row["_y"] = y
-            row["_year"] = year
-            rows.append(row)
+    logger.info("land prices ingest done: %d tiles fetched", fetched)
 
-        conn.register("_batch", pa.Table.from_pylist(rows))
-        conn.execute(
-            f"CREATE TABLE IF NOT EXISTS {LAND_TABLE} AS SELECT * FROM _batch WITH NO DATA"
-        )
-        conn.execute("BEGIN")
+
+def _feature_to_row(f: dict, x: int, y: int, year: int) -> dict:
+    """GeoJSON feature を _source.land_prices の行 dict に変換する。"""
+    row = dict(f.get("properties", {}))
+    row.pop("_id", None)
+    row.pop("_index", None)
+    geom = f.get("geometry") or {}
+    coords = geom.get("coordinates") or [None, None]
+    row["longitude"] = coords[0]
+    row["latitude"] = coords[1]
+    row["geometry"] = json.dumps(geom, ensure_ascii=False)
+    row["_z"] = LAND_TILE_Z
+    row["_x"] = x
+    row["_y"] = y
+    row["_year"] = year
+    return row
+
+
+def _write_tile_rows(
+    conn: duckdb.DuckDBPyConnection,
+    x: int,
+    y: int,
+    years: list[int],
+    rows: list[dict],
+) -> None:
+    """1 タイル分の行を 1 トランザクションで書き込む (対象年を入れ替え)。"""
+    if not rows:
+        return
+    conn.register("_batch", pa.Table.from_pylist(rows))
+    conn.execute(
+        f"CREATE TABLE IF NOT EXISTS {LAND_TABLE} AS SELECT * FROM _batch WITH NO DATA"
+    )
+    conn.execute("BEGIN")
+    if len(years) == 1:
         conn.execute(
             f"DELETE FROM {LAND_TABLE} WHERE _x = ? AND _y = ? AND _year = ?",
-            [x, y, year],
+            [x, y, years[0]],
         )
-        conn.execute(f"INSERT INTO {LAND_TABLE} SELECT * FROM _batch")
-        conn.execute("COMMIT")
-        conn.unregister("_batch")
+    else:
+        conn.execute(f"DELETE FROM {LAND_TABLE} WHERE _x = ? AND _y = ?", [x, y])
+    conn.execute(f"INSERT INTO {LAND_TABLE} SELECT * FROM _batch")
+    conn.execute("COMMIT")
+    conn.unregister("_batch")
 
-    logger.info("land prices ingest done: %d (tile,year) fetched", fetched)
 
-
-def _completed_land_pairs(
+def _ingested_land_tiles(
     conn: duckdb.DuckDBPyConnection,
-) -> set[tuple[int, int, int]]:
+) -> set[tuple[int, int]]:
     try:
         return {
-            (r[0], r[1], r[2])
+            (r[0], r[1])
             for r in conn.execute(
-                f"SELECT DISTINCT _x, _y, _year FROM {LAND_TABLE}"
+                f"SELECT DISTINCT _x, _y FROM {LAND_TABLE}"
             ).fetchall()
         }
     except duckdb.CatalogException:
