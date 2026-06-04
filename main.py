@@ -6,6 +6,7 @@ dataset-shared/README.md for the constraint detail.
 
 from __future__ import annotations
 
+import csv
 import importlib.util
 import json
 import logging
@@ -52,27 +53,12 @@ LAND_TILES_TABLE = "reinfolib._source.land_price_tiles"
 LAND_TILE_Z = 13
 LAND_START_YEAR = 1995
 
-# 日本の陸地（主要居住域）を覆う近似 BBox 群 (lon_min, lat_min, lon_max, lat_max)。
-# z=13 タイルへ展開し和集合を取ることで、外洋タイルの無駄打ちを抑える。
-LAND_BBOXES: list[tuple[float, float, float, float]] = [
-    (139.3, 41.3, 145.9, 45.6),  # 北海道
-    (139.4, 37.0, 141.7, 41.6),  # 東北
-    (136.0, 34.5, 140.9, 38.0),  # 関東・中部・北陸
-    (131.0, 33.8, 136.3, 36.0),  # 近畿・中国
-    (132.0, 32.7, 134.8, 34.5),  # 四国
-    (129.3, 31.0, 132.1, 34.0),  # 九州北部
-    (130.0, 30.9, 131.9, 32.2),  # 九州南部
-    (127.6, 26.0, 128.4, 26.9),  # 沖縄本島
-    (123.7, 24.0, 125.5, 24.9),  # 宮古・八重山
-    (129.2, 28.1, 129.8, 28.6),  # 奄美
-    (130.4, 30.2, 131.1, 30.8),  # 種子島・屋久島
-    (138.2, 37.8, 138.6, 38.4),  # 佐渡
-    (129.2, 34.0, 129.5, 34.7),  # 対馬
-    (129.6, 33.7, 129.8, 33.9),  # 壱岐
-    (128.6, 32.5, 129.2, 33.0),  # 五島
-    (133.0, 36.1, 133.4, 36.4),  # 隠岐
-    (142.0, 26.5, 142.3, 27.2),  # 小笠原
-]
+# 走査タイルは nlftp の市区町村境界 bbox (data/municipality_bbox.csv) から生成する。
+# 全市区町村域を漏れなくカバーするため、手書き矩形のような端の取りこぼしが起きない。
+# CSV は nlftp.boundary.municipality の各ポリゴン bbox を抽出したもの。
+LAND_BBOX_CSV = Path(__file__).resolve().parent / "data" / "municipality_bbox.csv"
+# 境界の簡略化(ST_CoverageSimplify 0.002)と小島除去の誤差を吸収するバッファ(度)
+LAND_BBOX_BUFFER = 0.01
 
 
 @contextmanager
@@ -117,6 +103,7 @@ def main() -> None:
         )
         tiles = discover_land_price_tiles(conn, client, year=land_latest)
         ingest_land_prices(conn, client, tiles=tiles, years=land_years)
+        _verify_land_coverage(conn)
 
     dbt = dbtRunner()
     for cmd in (
@@ -220,14 +207,33 @@ def _lonlat_to_tile(lon: float, lat: float, z: int) -> tuple[int, int]:
     return x, y
 
 
+def _load_municipality_bboxes() -> list[tuple[float, float, float, float]]:
+    """市区町村境界 bbox をバッファ込みで読み込む。"""
+    b = LAND_BBOX_BUFFER
+    with open(LAND_BBOX_CSV, newline="") as f:
+        return [
+            (
+                float(r["xmin"]) - b,
+                float(r["ymin"]) - b,
+                float(r["xmax"]) + b,
+                float(r["ymax"]) + b,
+            )
+            for r in csv.DictReader(f)
+        ]
+
+
 def _land_scan_tiles(z: int) -> list[tuple[int, int]]:
-    """陸地近似 BBox 群を z タイルへ展開した和集合 (昇順)。
+    """市区町村境界 bbox を z タイルへ展開した和集合 (昇順)。
 
     環境変数 LAND_BBOX_OVERRIDE="lon0,lat0,lon1,lat1" で走査範囲を上書きできる
     (検証用に範囲を狭める)。
     """
     override = os.environ.get("LAND_BBOX_OVERRIDE")
-    boxes = [tuple(float(v) for v in override.split(","))] if override else LAND_BBOXES
+    if override:
+        nums = [float(v) for v in override.split(",")]
+        boxes = [(nums[0], nums[1], nums[2], nums[3])]
+    else:
+        boxes = _load_municipality_bboxes()
     tiles: set[tuple[int, int]] = set()
     for lon0, lat0, lon1, lat1 in boxes:
         x0, y0 = _lonlat_to_tile(lon0, lat1, z)  # 北西
@@ -367,6 +373,46 @@ def _completed_land_pairs(
         }
     except duckdb.CatalogException:
         return set()
+
+
+def _municipality_codes() -> set[str]:
+    """市区町村境界 CSV の全 lg_code (5桁) を返す。"""
+    with open(LAND_BBOX_CSV, newline="") as f:
+        return {r["lg_code"] for r in csv.DictReader(f)}
+
+
+def _verify_land_coverage(conn: duckdb.DuckDBPyConnection) -> None:
+    """取得した地価データのカバレッジを検証しログ出力する (取りこぼしの安全網)。
+
+    完全な正解数は不明だが、47都道府県の欠落と市区町村カバー率の異常で
+    走査範囲の取りこぼしを検出する。
+    """
+    prefs = {
+        r[0]
+        for r in conn.execute(
+            f"SELECT DISTINCT prefecture_code FROM {LAND_TABLE}"
+        ).fetchall()
+    }
+    missing = {f"{i:02d}" for i in range(1, 48)} - prefs
+    if missing:
+        logger.warning("land coverage: 地価データが無い都道府県: %s", sorted(missing))
+    else:
+        logger.info("land coverage: 47都道府県すべてに地価データあり")
+
+    muni = _municipality_codes()
+    got = {
+        r[0]
+        for r in conn.execute(
+            f"SELECT DISTINCT city_code FROM {LAND_TABLE}"
+        ).fetchall()
+    }
+    covered = got & muni
+    logger.info(
+        "land coverage: 市区町村 %d/%d (%.1f%%) に地価地点あり",
+        len(covered),
+        len(muni),
+        100.0 * len(covered) / len(muni) if muni else 0.0,
+    )
 
 
 if __name__ == "__main__":
