@@ -407,20 +407,26 @@ def ingest_land_prices(
 
 
 def _feature_to_row(f: dict, x: int, y: int, year: int) -> dict:
-    """GeoJSON feature を _source.land_prices の行 dict に変換する。"""
-    row = dict(f.get("properties", {}))
-    row.pop("_id", None)
-    row.pop("_index", None)
+    """GeoJSON feature を _source.land_prices の行 dict に変換する。
+
+    properties はキー構成が地点ごとに変動するため、JSON 文字列のまま保持して
+    raw スキーマを固定 8 カラムにする。構造化は stg 層の json_extract に委ねる。
+    """
+    props = dict(f.get("properties", {}))
+    props.pop("_id", None)
+    props.pop("_index", None)
     geom = f.get("geometry") or {}
     coords = geom.get("coordinates") or [None, None]
-    row["longitude"] = coords[0]
-    row["latitude"] = coords[1]
-    row["geometry"] = json.dumps(geom, ensure_ascii=False)
-    row["_z"] = LAND_TILE_Z
-    row["_x"] = x
-    row["_y"] = y
-    row["_year"] = year
-    return row
+    return {
+        "properties": json.dumps(props, ensure_ascii=False),
+        "longitude": coords[0],
+        "latitude": coords[1],
+        "geometry": json.dumps(geom, ensure_ascii=False),
+        "_z": LAND_TILE_Z,
+        "_x": x,
+        "_y": y,
+        "_year": year,
+    }
 
 
 def _write_tile_rows(
