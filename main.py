@@ -1,12 +1,11 @@
-"""不動産情報ライブラリ API 取得 + dbt build + snapshot pipeline.
+"""不動産情報ライブラリ API 取得 + dbt build パイプライン。
 
-Snapshot must run in the SAME Python process as dbt build — see
-dataset-shared/README.md for the constraint detail.
+fdl の DuckLake カタログ(FDL_* 環境変数で注入)へ API 取得データを書き込み、
+dbt で変換する。R2 への公開は fdl run/sync の publish が担う。
 """
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import logging
 import math
@@ -16,23 +15,11 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import date
 from itertools import product
-from pathlib import Path
 
 import duckdb
 import pyarrow as pa
 from dbt.cli.main import dbtRunner
 from reinfolib import ReinfolibClient
-
-SHARED_SCRIPTS = Path(__file__).resolve().parent / "shared" / "scripts"
-sys.path.insert(0, str(SHARED_SCRIPTS))
-from queria_config import load_target  # noqa: E402
-
-_spec = importlib.util.spec_from_file_location(
-    "snapshot_to_r2", SHARED_SCRIPTS / "snapshot-to-r2.py"
-)
-assert _spec and _spec.loader
-snapshot_to_r2 = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(snapshot_to_r2)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -66,21 +53,35 @@ LAND_BBOXES: list[tuple[float, float, float, float]] = [
 
 
 @contextmanager
-def _ducklake_connect(target_name: str) -> Generator[duckdb.DuckDBPyConnection]:
-    """Open a fresh DuckDB session with the dataset's Neon DuckLake attached."""
-    target = load_target(target_name)
+def _ducklake_connect() -> Generator[duckdb.DuckDBPyConnection]:
+    """Open a fresh DuckDB session with the fdl-managed DuckLake attached.
+
+    Uses the ``FDL_*`` environment variables injected by ``fdl run``: the local
+    SQLite live catalog (``FDL_CATALOG_PATH``) and the data location
+    (``FDL_DATA_URL``, R2 for S3 targets). The catalog is created on first
+    attach when it does not exist yet.
+    """
+    catalog_path = os.environ["FDL_CATALOG_PATH"]
+    data_url = os.environ["FDL_DATA_URL"]
     conn = duckdb.connect(":memory:")
     try:
         conn.execute("INSTALL ducklake; LOAD ducklake;")
-        conn.execute("INSTALL postgres; LOAD postgres;")
-        conn.execute("INSTALL httpfs; LOAD httpfs;")
+        conn.execute("INSTALL sqlite; LOAD sqlite;")
+        if data_url.startswith("s3://"):
+            conn.execute("INSTALL httpfs; LOAD httpfs;")
+            conn.execute(
+                "CREATE SECRET (TYPE s3, KEY_ID ?, SECRET ?, ENDPOINT ?, "
+                "URL_STYLE 'path', REGION 'auto')",
+                [
+                    os.environ["FDL_S3_ACCESS_KEY_ID"],
+                    os.environ["FDL_S3_SECRET_ACCESS_KEY"],
+                    os.environ["FDL_S3_ENDPOINT_HOST"],
+                ],
+            )
         conn.execute(
-            "CREATE SECRET r2 (TYPE r2, KEY_ID ?, SECRET ?, ACCOUNT_ID ?)",
-            [target.s3_access_key_id, target.s3_secret_access_key, target.cf_account_id],
-        )
-        conn.execute(
-            f"ATTACH '{target.ducklake_uri}' AS \"{target.dataset}\" "
-            f"(DATA_PATH '{target.data_path}', META_SCHEMA '{target.meta_schema}')"
+            f"ATTACH 'ducklake:{catalog_path}' AS reinfolib "
+            f"(DATA_PATH '{data_url}', OVERRIDE_DATA_PATH true, "
+            f"META_TYPE 'sqlite', META_JOURNAL_MODE 'WAL', BUSY_TIMEOUT 5000)"
         )
         yield conn
     finally:
@@ -95,7 +96,7 @@ def main() -> None:
     all_quarters = _generate_quarters(START)
     logger.info("start: %d areas × %d quarters", len(areas), len(all_quarters))
 
-    with _ducklake_connect(target) as conn, ReinfolibClient(api_key) as client:
+    with _ducklake_connect() as conn, ReinfolibClient(api_key) as client:
         conn.execute("CREATE SCHEMA IF NOT EXISTS reinfolib._source")
         ingest_trade_prices(conn, client, areas=areas, quarters=all_quarters)
 
@@ -109,7 +110,7 @@ def main() -> None:
         if os.environ.get("LAND_LATEST_YEAR_ONLY")
         else list(range(LAND_START_YEAR, land_latest + 1))
     )
-    with _ducklake_connect(target) as conn, ReinfolibClient(api_key) as client:
+    with _ducklake_connect() as conn, ReinfolibClient(api_key) as client:
         tiles = _known_land_tiles(conn)
         ingest_land_prices(conn, client, tiles=tiles, years=land_years)
         _verify_land_coverage(conn)
@@ -123,8 +124,6 @@ def main() -> None:
         result = dbt.invoke(cmd)
         if not result.success:
             raise SystemExit(f"dbt {' '.join(cmd)} failed")
-
-    snapshot_to_r2.run(target)
 
 
 def ingest_trade_prices(
