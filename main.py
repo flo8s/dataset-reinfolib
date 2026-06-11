@@ -1,12 +1,11 @@
-"""不動産情報ライブラリ API 取得 + dbt build + snapshot pipeline.
+"""不動産情報ライブラリ API 取得 + dbt build パイプライン。
 
-Snapshot must run in the SAME Python process as dbt build — see
-dataset-shared/README.md for the constraint detail.
+fdl の DuckLake カタログ(FDL_* 環境変数で注入)へ API 取得データを書き込み、
+dbt で変換する。R2 への公開は fdl run/sync の publish が担う。
 """
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import logging
 import math
@@ -16,23 +15,11 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import date
 from itertools import product
-from pathlib import Path
 
 import duckdb
 import pyarrow as pa
 from dbt.cli.main import dbtRunner
 from reinfolib import ReinfolibClient
-
-SHARED_SCRIPTS = Path(__file__).resolve().parent / "shared" / "scripts"
-sys.path.insert(0, str(SHARED_SCRIPTS))
-from queria_config import load_target  # noqa: E402
-
-_spec = importlib.util.spec_from_file_location(
-    "snapshot_to_r2", SHARED_SCRIPTS / "snapshot-to-r2.py"
-)
-assert _spec and _spec.loader
-snapshot_to_r2 = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(snapshot_to_r2)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -49,6 +36,7 @@ START: YearQuarter = (2005, 3)
 # -- XPT002: 地価公示・地価調査ポイント --
 LAND_TABLE = "reinfolib._source.land_prices"
 LAND_TILES_TABLE = "reinfolib._source.land_price_tiles"
+LAND_SCAN_PROGRESS = "reinfolib._source.land_scan_progress"
 LAND_TILE_Z = 13
 LAND_START_YEAR = 1995
 
@@ -65,21 +53,35 @@ LAND_BBOXES: list[tuple[float, float, float, float]] = [
 
 
 @contextmanager
-def _ducklake_connect(target_name: str) -> Generator[duckdb.DuckDBPyConnection]:
-    """Open a fresh DuckDB session with the dataset's Neon DuckLake attached."""
-    target = load_target(target_name)
+def _ducklake_connect() -> Generator[duckdb.DuckDBPyConnection]:
+    """Open a fresh DuckDB session with the fdl-managed DuckLake attached.
+
+    Uses the ``FDL_*`` environment variables injected by ``fdl run``: the local
+    SQLite live catalog (``FDL_CATALOG_PATH``) and the data location
+    (``FDL_DATA_URL``, R2 for S3 targets). The catalog is created on first
+    attach when it does not exist yet.
+    """
+    catalog_path = os.environ["FDL_CATALOG_PATH"]
+    data_url = os.environ["FDL_DATA_URL"]
     conn = duckdb.connect(":memory:")
     try:
         conn.execute("INSTALL ducklake; LOAD ducklake;")
-        conn.execute("INSTALL postgres; LOAD postgres;")
-        conn.execute("INSTALL httpfs; LOAD httpfs;")
+        conn.execute("INSTALL sqlite; LOAD sqlite;")
+        if data_url.startswith("s3://"):
+            conn.execute("INSTALL httpfs; LOAD httpfs;")
+            conn.execute(
+                "CREATE SECRET (TYPE s3, KEY_ID ?, SECRET ?, ENDPOINT ?, "
+                "URL_STYLE 'path', REGION 'auto')",
+                [
+                    os.environ["FDL_S3_ACCESS_KEY_ID"],
+                    os.environ["FDL_S3_SECRET_ACCESS_KEY"],
+                    os.environ["FDL_S3_ENDPOINT_HOST"],
+                ],
+            )
         conn.execute(
-            "CREATE SECRET r2 (TYPE r2, KEY_ID ?, SECRET ?, ACCOUNT_ID ?)",
-            [target.s3_access_key_id, target.s3_secret_access_key, target.cf_account_id],
-        )
-        conn.execute(
-            f"ATTACH '{target.ducklake_uri}' AS \"{target.dataset}\" "
-            f"(DATA_PATH '{target.data_path}', META_SCHEMA '{target.meta_schema}')"
+            f"ATTACH 'ducklake:{catalog_path}' AS reinfolib "
+            f"(DATA_PATH '{data_url}', OVERRIDE_DATA_PATH true, "
+            f"META_TYPE 'sqlite', META_JOURNAL_MODE 'WAL', BUSY_TIMEOUT 5000)"
         )
         yield conn
     finally:
@@ -94,17 +96,22 @@ def main() -> None:
     all_quarters = _generate_quarters(START)
     logger.info("start: %d areas × %d quarters", len(areas), len(all_quarters))
 
-    with _ducklake_connect(target) as conn, ReinfolibClient(api_key) as client:
+    with _ducklake_connect() as conn, ReinfolibClient(api_key) as client:
         conn.execute("CREATE SCHEMA IF NOT EXISTS reinfolib._source")
         ingest_trade_prices(conn, client, areas=areas, quarters=all_quarters)
 
         land_latest = _latest_land_year(client)
-        land_years = (
-            [land_latest]
-            if os.environ.get("LAND_LATEST_YEAR_ONLY")
-            else list(range(LAND_START_YEAR, land_latest + 1))
-        )
-        tiles = discover_land_price_tiles(conn, client, year=land_latest)
+        discover_land_price_tiles(conn, client, year=land_latest)
+
+    # フェーズ0 で長時間保持した接続を一度閉じ、フェーズ1 は新しい接続で開始する
+    # (DuckLake バックエンドの idle 接続が枯渇するのを避ける)
+    land_years = (
+        [land_latest]
+        if os.environ.get("LAND_LATEST_YEAR_ONLY")
+        else list(range(LAND_START_YEAR, land_latest + 1))
+    )
+    with _ducklake_connect() as conn, ReinfolibClient(api_key) as client:
+        tiles = _known_land_tiles(conn)
         ingest_land_prices(conn, client, tiles=tiles, years=land_years)
         _verify_land_coverage(conn)
 
@@ -117,8 +124,6 @@ def main() -> None:
         result = dbt.invoke(cmd)
         if not result.success:
             raise SystemExit(f"dbt {' '.join(cmd)} failed")
-
-    snapshot_to_r2.run(target)
 
 
 def ingest_trade_prices(
@@ -253,30 +258,99 @@ def _latest_land_year(client: ReinfolibClient) -> int:
 def discover_land_price_tiles(
     conn: duckdb.DuckDBPyConnection, client: ReinfolibClient, *, year: int
 ) -> list[tuple[int, int]]:
-    """フェーズ0: 最新年で陸地タイルを走査し、地点が存在するタイルを記録・返す。
+    """フェーズ0: 陸地タイルを走査し、地点が存在するタイルを記録・返す。
 
-    一度記録した有効タイルは再利用する (過去年バックフィルや再ビルドを軽くする)。
+    走査進捗と発見タイルを 1000 タイルごとに永続化し、中断後は続きから再開する。
+    一度完了した有効タイルは再利用する (過去年バックフィルや再ビルドを軽くする)。
+    LAND_BBOX_OVERRIDE 指定時 (検証用) は永続化せずメモリで完結する。
     """
-    known = _known_land_tiles(conn)
-    if known:
-        logger.info("land tiles: reuse %d known tiles", len(known))
+    scan = _land_scan_tiles(LAND_TILE_Z)
+
+    if os.environ.get("LAND_BBOX_OVERRIDE"):
+        found = [
+            (x, y)
+            for x, y in scan
+            if _fetch_land_features(client, z=LAND_TILE_Z, x=x, y=y, year=year)
+        ]
+        logger.info(
+            "land tiles (override): %d/%d tiles have points", len(found), len(scan)
+        )
+        return found
+
+    _ensure_tile_tables(conn)
+    scanned, total = _scan_progress(conn)
+    if total != len(scan):
+        # 走査範囲が変わった or 初回 → やり直し
+        _reset_scan(conn)
+        scanned = 0
+    if scanned >= len(scan):
+        known = _known_land_tiles(conn)
+        logger.info("land tiles: reuse %d known tiles (scan complete)", len(known))
         return known
 
-    scan = _land_scan_tiles(LAND_TILE_Z)
-    logger.info("land tiles: scanning %d candidate tiles (year=%d)", len(scan), year)
-    found: list[tuple[int, int]] = []
-    for i, (x, y) in enumerate(scan):
+    logger.info(
+        "land tiles: scanning %d candidate tiles from %d (year=%d)",
+        len(scan),
+        scanned,
+        year,
+    )
+    batch: list[tuple[int, int]] = []
+    for i in range(scanned, len(scan)):
+        x, y = scan[i]
         if _fetch_land_features(client, z=LAND_TILE_Z, x=x, y=y, year=year):
-            found.append((x, y))
+            batch.append((x, y))
         if (i + 1) % 1000 == 0:
-            logger.info("  scanned %d/%d, found %d", i + 1, len(scan), len(found))
+            _checkpoint_tiles(conn, batch, i + 1, len(scan))
+            batch = []
+            n = conn.execute(f"SELECT count(*) FROM {LAND_TILES_TABLE}").fetchone()[0]
+            logger.info("  scanned %d/%d, found %d", i + 1, len(scan), n)
+    _checkpoint_tiles(conn, batch, len(scan), len(scan))
 
-    rows = [{"z": LAND_TILE_Z, "x": x, "y": y} for x, y in found]
-    conn.register("_tiles", pa.Table.from_pylist(rows))
-    conn.execute(f"CREATE OR REPLACE TABLE {LAND_TILES_TABLE} AS SELECT * FROM _tiles")
-    conn.unregister("_tiles")
-    logger.info("land tiles: %d tiles have points", len(found))
-    return found
+    known = _known_land_tiles(conn)
+    logger.info("land tiles: %d tiles have points", len(known))
+    return known
+
+
+def _ensure_tile_tables(conn: duckdb.DuckDBPyConnection) -> None:
+    conn.execute(
+        f"CREATE TABLE IF NOT EXISTS {LAND_TILES_TABLE} (z INTEGER, x INTEGER, y INTEGER)"
+    )
+    conn.execute(
+        f"CREATE TABLE IF NOT EXISTS {LAND_SCAN_PROGRESS} (scanned BIGINT, total BIGINT)"
+    )
+
+
+def _scan_progress(conn: duckdb.DuckDBPyConnection) -> tuple[int, int]:
+    try:
+        row = conn.execute(
+            f"SELECT scanned, total FROM {LAND_SCAN_PROGRESS} LIMIT 1"
+        ).fetchone()
+    except duckdb.CatalogException:
+        return 0, 0
+    return (int(row[0]), int(row[1])) if row else (0, 0)
+
+
+def _reset_scan(conn: duckdb.DuckDBPyConnection) -> None:
+    conn.execute(f"DELETE FROM {LAND_TILES_TABLE}")
+    conn.execute(f"DELETE FROM {LAND_SCAN_PROGRESS}")
+
+
+def _checkpoint_tiles(
+    conn: duckdb.DuckDBPyConnection,
+    found: list[tuple[int, int]],
+    scanned: int,
+    total: int,
+) -> None:
+    """発見タイルの追記と走査進捗の更新をまとめて永続化する。"""
+    conn.execute("BEGIN")
+    if found:
+        rows = [{"z": LAND_TILE_Z, "x": x, "y": y} for x, y in found]
+        conn.register("_tiles", pa.Table.from_pylist(rows))
+        conn.execute(f"INSERT INTO {LAND_TILES_TABLE} SELECT * FROM _tiles")
+        conn.unregister("_tiles")
+    conn.execute(f"DELETE FROM {LAND_SCAN_PROGRESS}")
+    conn.execute(f"INSERT INTO {LAND_SCAN_PROGRESS} VALUES (?, ?)", [scanned, total])
+    conn.execute("COMMIT")
 
 
 def _known_land_tiles(conn: duckdb.DuckDBPyConnection) -> list[tuple[int, int]]:
@@ -298,65 +372,97 @@ def ingest_land_prices(
     tiles: list[tuple[int, int]],
     years: list[int],
 ) -> None:
-    """フェーズ1: 有効タイル×年で地価公示・地価調査ポイントを取得する。"""
+    """フェーズ1: 有効タイルごとに対象年をまとめて取得する。
+
+    タイル単位で全対象年を取得し 1 トランザクションで書き込むことで、DuckLake
+    バックエンドへのトランザクション数を抑える (接続枯渇対策)。再開単位はタイル:
+    land_prices に既にあるタイルはスキップする (LAND_LATEST_YEAR_ONLY 時は
+    最新年を毎回更新するためスキップしない)。
+    """
     if not tiles:
         logger.warning("land prices: no tiles to ingest")
         return
 
-    latest = years[-1]
-    completed = _completed_land_pairs(conn)
-    total = len(tiles) * len(years)
-    logger.info("land prices: %d completed / %d (tile,year)", len(completed), total)
+    latest_only = bool(os.environ.get("LAND_LATEST_YEAR_ONLY"))
+    completed = set() if latest_only else _ingested_land_tiles(conn)
+    total = len(tiles)
+    logger.info("land prices: %d/%d tiles already ingested", len(completed), total)
 
     fetched = 0
-    for (x, y), year in product(tiles, years):
-        if (x, y, year) in completed and year != latest:
+    for idx, (x, y) in enumerate(tiles):
+        if (x, y) in completed:
             continue
-        feats = _fetch_land_features(client, z=LAND_TILE_Z, x=x, y=y, year=year)
-        if not feats:
-            continue
+        rows: list[dict] = []
+        for year in years:
+            for f in _fetch_land_features(client, z=LAND_TILE_Z, x=x, y=y, year=year):
+                rows.append(_feature_to_row(f, x, y, year))
+        _write_tile_rows(conn, x, y, years, rows)
         fetched += 1
+        if (idx + 1) % 100 == 0:
+            n = conn.execute(f"SELECT count(*) FROM {LAND_TABLE}").fetchone()[0]
+            logger.info("  tiles %d/%d, rows %d", idx + 1, total, n)
 
-        rows = []
-        for f in feats:
-            row = dict(f.get("properties", {}))
-            row.pop("_id", None)
-            row.pop("_index", None)
-            geom = f.get("geometry") or {}
-            coords = geom.get("coordinates") or [None, None]
-            row["longitude"] = coords[0]
-            row["latitude"] = coords[1]
-            row["geometry"] = json.dumps(geom, ensure_ascii=False)
-            row["_z"] = LAND_TILE_Z
-            row["_x"] = x
-            row["_y"] = y
-            row["_year"] = year
-            rows.append(row)
+    logger.info("land prices ingest done: %d tiles fetched", fetched)
 
-        conn.register("_batch", pa.Table.from_pylist(rows))
-        conn.execute(
-            f"CREATE TABLE IF NOT EXISTS {LAND_TABLE} AS SELECT * FROM _batch WITH NO DATA"
-        )
-        conn.execute("BEGIN")
+
+def _feature_to_row(f: dict, x: int, y: int, year: int) -> dict:
+    """GeoJSON feature を _source.land_prices の行 dict に変換する。
+
+    properties はキー構成が地点ごとに変動するため、JSON 文字列のまま保持して
+    raw スキーマを固定 8 カラムにする。構造化は stg 層の json_extract に委ねる。
+    """
+    props = dict(f.get("properties", {}))
+    props.pop("_id", None)
+    props.pop("_index", None)
+    geom = f.get("geometry") or {}
+    coords = geom.get("coordinates") or [None, None]
+    return {
+        "properties": json.dumps(props, ensure_ascii=False),
+        "longitude": coords[0],
+        "latitude": coords[1],
+        "geometry": json.dumps(geom, ensure_ascii=False),
+        "_z": LAND_TILE_Z,
+        "_x": x,
+        "_y": y,
+        "_year": year,
+    }
+
+
+def _write_tile_rows(
+    conn: duckdb.DuckDBPyConnection,
+    x: int,
+    y: int,
+    years: list[int],
+    rows: list[dict],
+) -> None:
+    """1 タイル分の行を 1 トランザクションで書き込む (対象年を入れ替え)。"""
+    if not rows:
+        return
+    conn.register("_batch", pa.Table.from_pylist(rows))
+    conn.execute(
+        f"CREATE TABLE IF NOT EXISTS {LAND_TABLE} AS SELECT * FROM _batch WITH NO DATA"
+    )
+    conn.execute("BEGIN")
+    if len(years) == 1:
         conn.execute(
             f"DELETE FROM {LAND_TABLE} WHERE _x = ? AND _y = ? AND _year = ?",
-            [x, y, year],
+            [x, y, years[0]],
         )
-        conn.execute(f"INSERT INTO {LAND_TABLE} SELECT * FROM _batch")
-        conn.execute("COMMIT")
-        conn.unregister("_batch")
+    else:
+        conn.execute(f"DELETE FROM {LAND_TABLE} WHERE _x = ? AND _y = ?", [x, y])
+    conn.execute(f"INSERT INTO {LAND_TABLE} SELECT * FROM _batch")
+    conn.execute("COMMIT")
+    conn.unregister("_batch")
 
-    logger.info("land prices ingest done: %d (tile,year) fetched", fetched)
 
-
-def _completed_land_pairs(
+def _ingested_land_tiles(
     conn: duckdb.DuckDBPyConnection,
-) -> set[tuple[int, int, int]]:
+) -> set[tuple[int, int]]:
     try:
         return {
-            (r[0], r[1], r[2])
+            (r[0], r[1])
             for r in conn.execute(
-                f"SELECT DISTINCT _x, _y, _year FROM {LAND_TABLE}"
+                f"SELECT DISTINCT _x, _y FROM {LAND_TABLE}"
             ).fetchall()
         }
     except duckdb.CatalogException:
