@@ -105,11 +105,7 @@ def main() -> None:
 
     # フェーズ0 で長時間保持した接続を一度閉じ、フェーズ1 は新しい接続で開始する
     # (DuckLake バックエンドの idle 接続が枯渇するのを避ける)
-    land_years = (
-        [land_latest]
-        if os.environ.get("LAND_LATEST_YEAR_ONLY")
-        else list(range(LAND_START_YEAR, land_latest + 1))
-    )
+    land_years = list(range(LAND_START_YEAR, land_latest + 1))
     with _ducklake_connect() as conn, ReinfolibClient(api_key) as client:
         tiles = _known_land_tiles(conn)
         ingest_land_prices(conn, client, tiles=tiles, years=land_years)
@@ -374,35 +370,39 @@ def ingest_land_prices(
 ) -> None:
     """フェーズ1: 有効タイルごとに対象年をまとめて取得する。
 
-    タイル単位で全対象年を取得し 1 トランザクションで書き込むことで、DuckLake
-    バックエンドへのトランザクション数を抑える (接続枯渇対策)。再開単位はタイル:
-    land_prices に既にあるタイルはスキップする (LAND_LATEST_YEAR_ONLY 時は
-    最新年を毎回更新するためスキップしない)。
+    タイル単位で対象年を取得し 1 トランザクションで書き込むことで、DuckLake
+    バックエンドへのトランザクション数を抑える (接続枯渇対策)。取得済みかどうかで
+    取得年を自動で切り替える差分更新:
+    - 新規タイル (land_prices に未登録): 全年 (初回バックフィル)
+    - 取得済みタイル: 最新年のみ再取得 → 毎年の地価公示(3月)・地価調査(9月)の
+      新規公表を取り込む。env フラグ不要でローカル/CI とも同じ挙動。
     """
     if not tiles:
         logger.warning("land prices: no tiles to ingest")
         return
 
-    latest_only = bool(os.environ.get("LAND_LATEST_YEAR_ONLY"))
-    completed = set() if latest_only else _ingested_land_tiles(conn)
+    latest = years[-1]
+    ingested = _ingested_land_tiles(conn)
     total = len(tiles)
-    logger.info("land prices: %d/%d tiles already ingested", len(completed), total)
+    logger.info(
+        "land prices: %d/%d tiles 取得済み (新規=全年, 既存=最新年%d を再取得)",
+        len(ingested),
+        total,
+        latest,
+    )
 
-    fetched = 0
     for idx, (x, y) in enumerate(tiles):
-        if (x, y) in completed:
-            continue
+        tile_years = [latest] if (x, y) in ingested else years
         rows: list[dict] = []
-        for year in years:
+        for year in tile_years:
             for f in _fetch_land_features(client, z=LAND_TILE_Z, x=x, y=y, year=year):
                 rows.append(_feature_to_row(f, x, y, year))
-        _write_tile_rows(conn, x, y, years, rows)
-        fetched += 1
+        _write_tile_rows(conn, x, y, tile_years, rows)
         if (idx + 1) % 100 == 0:
             n = conn.execute(f"SELECT count(*) FROM {LAND_TABLE}").fetchone()[0]
             logger.info("  tiles %d/%d, rows %d", idx + 1, total, n)
 
-    logger.info("land prices ingest done: %d tiles fetched", fetched)
+    logger.info("land prices ingest done: %d tiles processed", total)
 
 
 def _feature_to_row(f: dict, x: int, y: int, year: int) -> dict:
@@ -477,7 +477,8 @@ def _verify_land_coverage(conn: duckdb.DuckDBPyConnection) -> None:
     prefs = {
         r[0]
         for r in conn.execute(
-            f"SELECT DISTINCT prefecture_code FROM {LAND_TABLE}"
+            "SELECT DISTINCT json_extract_string(properties, '$.prefecture_code') "
+            f"FROM {LAND_TABLE}"
         ).fetchall()
     }
     missing = {f"{i:02d}" for i in range(1, 48)} - prefs
