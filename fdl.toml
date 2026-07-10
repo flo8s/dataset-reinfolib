@@ -19,7 +19,7 @@ title = "不動産情報ライブラリ"
 description = "国土交通省 不動産情報ライブラリAPIから取得した不動産価格情報（取引価格・成約価格）、地価公示・地価調査ポイント、市区町村マスタ"
 cover = "🏠"
 tags = ['不動産', '価格', '取引', '地価', '国土交通省']
-repository_url = "https://github.com/flo8s/dataset-reinfolib"
+repository_url = "https://github.com/queria-io/dataset-reinfolib"
 schedule = "daily"
 
 [meta.schemas.main]

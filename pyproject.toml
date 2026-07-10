@@ -19,7 +19,7 @@ cover = "🏠"
 tags = ["不動産", "価格", "取引", "地価", "国土交通省"]
 license = "政府標準利用規約 第2.0版"
 license_url = "https://www.reinfolib.mlit.go.jp/help/termsOfUse/"
-repository_url = "https://github.com/flo8s/dataset-reinfolib"
+repository_url = "https://github.com/queria-io/dataset-reinfolib"
 schedule = "daily"
 
 [tool.queria.schemas.main]
