@@ -2,7 +2,7 @@ version: 2
 
 models:
   - name: mart_trade_prices
-    description: 不動産取引価格・成約価格（全国）
+    description: 国土交通省 不動産情報ライブラリに基づく、全国の不動産取引価格・成約価格情報。物件種別、所在地（都道府県・市区町村・地区）、取引価格、面積、単価、建築年、構造、用途、取引時期などを収録する。
     config:
       meta:
         title: 不動産取引価格情報
