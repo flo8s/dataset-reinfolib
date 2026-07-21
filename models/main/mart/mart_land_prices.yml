@@ -2,7 +2,7 @@ version: 2
 
 models:
   - name: mart_land_prices
-    description: 地価公示・地価調査ポイント（全国）
+    description: 国土交通省 不動産情報ライブラリの地価公示・都道府県地価調査に基づく、全国の地点別データ。所在地・緯度経度、価格と前年比、地積、用途区分、最寄駅・接面道路、建蔽率・容積率などを収録する。
     config:
       meta:
         title: 地価公示・地価調査ポイント
