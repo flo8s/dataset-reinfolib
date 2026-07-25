@@ -1,0 +1,53 @@
+spec_version: "0.1"
+name: reinfolib
+title: 不動産情報ライブラリ
+description: 国土交通省 不動産情報ライブラリAPIから取得した不動産価格情報（取引価格・成約価格）、地価公示・地価調査ポイント、市区町村マスタ
+keywords:
+  - 不動産
+  - 価格
+  - 取引
+  - 地価
+  - 国土交通省
+homepage: https://github.com/queria-io/dataset-reinfolib
+language: ja
+
+licenses:
+  - JP-GOV-STD-2.0
+
+sources:
+  - title: 不動産情報ライブラリ（国土交通省）
+    path: https://www.reinfolib.mlit.go.jp/
+
+contributors:
+  - title: 国土交通省
+    path: https://www.mlit.go.jp/
+    roles: [rightsHolder]
+
+temporal_coverage: { start: "1995", end: null }
+spatial_coverage: [JP]
+update_frequency: daily
+cover: 🏠
+
+ai_context:
+  instructions: |
+    地域ごとの不動産の相場や地価の推移を調べるのに使う。性格の違う2つの表がある。
+    mart_trade_prices は実際の取引（578万件・2005年〜）で、1行が1取引。
+    mart_land_prices は地価公示・地価調査の標準地（141万件・1995年〜）で、1行が1地点1年。
+    取引価格は個々の取引なので外れ値を含む。地域の相場を見るときは平均より中央値を使い、
+    件数の少ない地区は避ける。面積や価格は元データの段階で丸めや上限（「2000㎡以上」など）が
+    入っているため、そのまま平均すると歪む。
+    取引時期は year と quarter（四半期）までで、日付までは公開されない。
+    market_price を建物込みで比べるときは property_type（宅地・中古マンション等・農地・林地）を揃える。
+    価格区分（price_category）に取引価格と成約価格が混在するので、比較するときは絞る。
+    市区町村コード（municipality_code / city_code）で lg_code や address_br と結合できる。
+    国土交通省 不動産情報ライブラリの API 機能を使用しているが、
+    提供情報の最新性・正確性・完全性が保証されたものではない。
+  synonyms: [不動産取引価格, 地価公示, 地価調査, 実勢価格]
+  examples:
+    - 市区町村別の中古マンションの取引価格の中央値を年ごとに出したい
+    - 地価公示の標準地の価格の推移が見たい
+    - ある地区の土地取引の平米単価を調べたい
+
+schemas:
+  - name: main
+    title: 不動産価格情報

@@ -1,0 +1,74 @@
+schema: main
+name: mart_trade_prices
+title: 不動産取引価格情報
+description: 国土交通省 不動産情報ライブラリに基づく、全国の不動産取引価格・成約価格情報。物件種別、所在地（都道府県・市区町村・地区）、取引価格、面積、単価、建築年、構造、用途、取引時期などを収録する。
+published: true
+sources:
+  - path: https://www.reinfolib.mlit.go.jp/
+fields:
+  - name: property_type
+    title: 種類
+    description: 宅地(土地と建物)、土地、中古マンション等、農地、林地
+  - name: region
+    title: 地域
+  - name: municipality_code
+    title: 市区町村コード
+  - name: prefecture
+    title: 都道府県名
+  - name: municipality
+    title: 市区町村名
+  - name: district_name
+    title: 地区名
+  - name: trade_price
+    title: 取引価格（総額）
+    description: 円
+  - name: price_per_unit
+    title: 坪単価
+  - name: floor_plan
+    title: 間取り
+  - name: area
+    title: 面積（平米）
+  - name: unit_price
+    title: 平米単価
+  - name: land_shape
+    title: 土地の形状
+  - name: frontage
+    title: 間口（m）
+  - name: total_floor_area
+    title: 延床面積（平米）
+  - name: building_year
+    title: 建築年
+  - name: structure
+    title: 建物の構造
+  - name: use_type
+    title: 用途
+  - name: purpose
+    title: 今後の利用目的
+  - name: direction
+    title: 前面道路の方位
+  - name: classification
+    title: 前面道路の種類
+  - name: breadth
+    title: 前面道路の幅員（m）
+  - name: city_planning
+    title: 都市計画
+  - name: coverage_ratio
+    title: 建ぺい率（%）
+  - name: floor_area_ratio
+    title: 容積率（%）
+  - name: period
+    title: 取引時期
+  - name: renovation
+    title: 改装
+  - name: remarks
+    title: 備考
+  - name: price_category
+    title: 価格区分
+  - name: district_code
+    title: 地区コード
+  - name: prefecture_code
+    title: 都道府県コード
+  - name: year
+    title: 取得年
+  - name: quarter
+    title: 取得四半期
