@@ -1,0 +1,21 @@
+schema: main
+name: raw_land_prices
+description: 不動産情報ライブラリ XPT002 地価公示・地価調査ポイントデータ
+published: false
+fields:
+  - name: properties
+    description: 地点の属性。XPT002 の GeoJSON properties を JSON 文字列で保持し、stg で json_extract により構造化する
+  - name: longitude
+    description: 経度 (EPSG:6668)
+  - name: latitude
+    description: 緯度 (EPSG:6668)
+  - name: geometry
+    description: GeoJSON geometry (Point) 文字列
+  - name: _year
+    description: 価格時点年 (取得時メタ)
+  - name: _x
+    description: タイル X 座標 (取得時メタ)
+  - name: _y
+    description: タイル Y 座標 (取得時メタ)
+  - name: _z
+    description: タイルズームレベル (取得時メタ)

@@ -1,0 +1,92 @@
+schema: main
+name: mart_land_prices
+title: 地価公示・地価調査ポイント
+description: 国土交通省 不動産情報ライブラリの地価公示・都道府県地価調査に基づく、全国の地点別データ。所在地・緯度経度、価格と前年比、地積、用途区分、最寄駅・接面道路、建蔽率・容積率などを収録する。
+published: true
+sources:
+  - path: https://www.reinfolib.mlit.go.jp/
+fields:
+  - name: point_id
+    title: ポイントID
+  - name: land_price_type
+    title: 地価情報区分コード
+    description: 0=地価公示、1=地価調査
+  - name: land_price_type_name
+    title: 地価情報区分
+  - name: year
+    title: 価格時点年
+  - name: standard_lot_number
+    title: 標準地・基準地番号
+  - name: prefecture_code
+    title: 都道府県コード
+  - name: prefecture_name
+    title: 都道府県名
+  - name: city_code
+    title: 市区町村コード
+  - name: municipality_name
+    title: 市区町村名
+  - name: place_name
+    title: 地名
+  - name: location
+    title: 所在地
+  - name: current_price
+    title: 当年価格
+    description: 円/㎡
+  - name: last_year_price
+    title: 前年価格
+    description: 円/㎡
+  - name: change_rate
+    title: 対前年変動率
+    description: '%'
+  - name: cadastral_area
+    title: 地積
+    description: ㎡
+  - name: use_category
+    title: 用途区分
+    description: 住宅地、商業地、工業地等
+  - name: area_division
+    title: 区域区分
+    description: 市街化区域、市街化調整区域等
+  - name: usage_status
+    title: 利用現況
+  - name: surrounding_usage
+    title: 周辺の土地の利用現況
+  - name: building_structure
+    title: 建物構造
+  - name: ground_floors
+    title: 地上階数
+  - name: underground_floors
+    title: 地下階数
+  - name: nearest_station
+    title: 最寄駅名
+  - name: station_distance
+    title: 最寄駅までの距離
+  - name: front_road_condition
+    title: 前面道路の状況
+  - name: front_road_width
+    title: 前面道路の幅員
+  - name: zoning_use_category
+    title: 用途地域
+  - name: building_coverage_ratio
+    title: 建蔽率
+    description: '%'
+  - name: floor_area_ratio
+    title: 容積率
+    description: '%'
+  - name: fireproof_category
+    title: 防火・準防火地域区分
+  - name: gas_supply_availability
+    title: ガス供給の有無
+  - name: water_supply_availability
+    title: 水道供給の有無
+  - name: sewer_supply_availability
+    title: 下水道供給の有無
+  - name: longitude
+    title: 経度
+    description: EPSG:6668
+  - name: latitude
+    title: 緯度
+    description: EPSG:6668
+  - name: geom
+    title: 座標
+    description: ポイントジオメトリ (WKB)
