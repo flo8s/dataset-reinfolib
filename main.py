@@ -1,7 +1,7 @@
 """不動産情報ライブラリ API 取得 + dbt build パイプライン。
 
-fdl の DuckLake カタログ(FDL_* 環境変数で注入)へ API 取得データを書き込み、
-dbt で変換する。R2 への公開は fdl run/sync の publish が担う。
+queria の DuckLake カタログ(QUERIA_* 環境変数で注入)へ API 取得データを書き込み、
+dbt で変換する。R2 への公開は queria sync の push が担う。
 """
 
 from __future__ import annotations
