@@ -54,34 +54,43 @@ LAND_BBOXES: list[tuple[float, float, float, float]] = [
 
 @contextmanager
 def _ducklake_connect() -> Generator[duckdb.DuckDBPyConnection]:
-    """Open a fresh DuckDB session with the fdl-managed DuckLake attached.
+    """Open a fresh DuckDB session with the queria-managed DuckLake attached.
 
-    Uses the ``FDL_*`` environment variables injected by ``fdl run``: the local
-    SQLite live catalog (``FDL_CATALOG_PATH``) and the data location
-    (``FDL_DATA_URL``, R2 for S3 targets). The catalog is created on first
+    Uses the ``QUERIA_*`` environment variables injected by ``queria run``: the local
+    SQLite live catalog (``QUERIA_CATALOG_PATH``) and the data location
+    (``QUERIA_DATA_URL``, R2 for S3 targets). The catalog is created on first
     attach when it does not exist yet.
     """
-    catalog_path = os.environ["FDL_CATALOG_PATH"]
-    data_url = os.environ["FDL_DATA_URL"]
+    catalog_path = os.environ["QUERIA_CATALOG_PATH"]
+    data_url = os.environ["QUERIA_DATA_URL"]
     conn = duckdb.connect(":memory:")
     try:
         conn.execute("INSTALL ducklake; LOAD ducklake;")
         conn.execute("INSTALL sqlite; LOAD sqlite;")
         if data_url.startswith("s3://"):
             conn.execute("INSTALL httpfs; LOAD httpfs;")
+            # credential_chain はこの拡張にある
+            conn.execute("INSTALL aws; LOAD aws;")
+            # 認証情報を値として持たず、期限が切れたら取り直させる。一時認証情報は
+            # 15 分で切れるのに対しこのビルドはそれより長く走るので、値を渡す形だと
+            # 途中で書けなくなる。process が実行するのは queria で、鍵はどこにも置かない
+            use_ssl = (
+                "false" if os.environ.get("QUERIA_S3_USE_SSL") == "false" else "true"
+            )
             conn.execute(
-                "CREATE SECRET (TYPE s3, KEY_ID ?, SECRET ?, ENDPOINT ?, "
-                "URL_STYLE 'path', REGION 'auto')",
+                "CREATE SECRET (TYPE s3, PROVIDER credential_chain, "
+                "CHAIN 'process', REFRESH auto, ENDPOINT ?, URL_STYLE 'path', "
+                f"REGION ?, USE_SSL {use_ssl})",
                 [
-                    os.environ["FDL_S3_ACCESS_KEY_ID"],
-                    os.environ["FDL_S3_SECRET_ACCESS_KEY"],
-                    os.environ["FDL_S3_ENDPOINT_HOST"],
+                    os.environ["QUERIA_S3_ENDPOINT_HOST"],
+                    os.environ.get("QUERIA_S3_REGION", "auto"),
                 ],
             )
         conn.execute(
             f"ATTACH 'ducklake:{catalog_path}' AS reinfolib "
             f"(DATA_PATH '{data_url}', OVERRIDE_DATA_PATH true, "
-            f"META_TYPE 'sqlite', META_JOURNAL_MODE 'WAL', BUSY_TIMEOUT 5000)"
+            f"DATA_INLINING_ROW_LIMIT 0, META_TYPE 'sqlite', "
+            f"META_JOURNAL_MODE 'WAL', BUSY_TIMEOUT 5000)"
         )
         yield conn
     finally:
