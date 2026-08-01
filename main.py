@@ -152,7 +152,6 @@ def main() -> None:
     with _ducklake_connect() as (conn, secret), ReinfolibClient(api_key) as client:
         tiles = _known_land_tiles(conn)
         ingest_land_prices(conn, client, secret, tiles=tiles, years=land_years)
-        _verify_land_coverage(conn)
 
     dbt = dbtRunner()
     for cmd in (
@@ -163,6 +162,14 @@ def main() -> None:
         result = dbt.invoke(cmd)
         if not result.success:
             raise SystemExit(f"dbt {' '.join(cmd)} failed")
+
+    # 公開の直前なので、ここでの失敗でビルドを落とさない。カバレッジはログに
+    # 出すための診断で、公開を止める判断には使っていない
+    try:
+        with _ducklake_connect() as (conn, _):
+            _verify_land_coverage(conn)
+    except duckdb.Error as exc:
+        logger.warning("land coverage: 検証できなかった: %s", exc)
 
 
 def ingest_trade_prices(
@@ -602,15 +609,16 @@ def _save_tile_state(
 
 
 def _verify_land_coverage(conn: duckdb.DuckDBPyConnection) -> None:
-    """取得した地価データのカバレッジを検証しログ出力する (取りこぼしの安全網)。
+    """公開テーブルのカバレッジを検証しログ出力する (取りこぼしの安全網)。
 
-    47都道府県の欠落と総地点数で走査範囲の取りこぼしを検出する。
+    47都道府県の欠落と総地点数で走査範囲の取りこぼしを検出する。_source は
+    都道府県コードを JSON 文字列の中に持つので、そちらを見ると全行の JSON を
+    ダウンロードすることになる。列に展開済みの mart を見る。
     """
     prefs = {
         r[0]
         for r in conn.execute(
-            "SELECT DISTINCT json_extract_string(properties, '$.prefecture_code') "
-            f"FROM {LAND_TABLE}"
+            "SELECT DISTINCT prefecture_code FROM reinfolib.main.mart_land_prices"
         ).fetchall()
     }
     missing = {f"{i:02d}" for i in range(1, 48)} - prefs
@@ -619,7 +627,9 @@ def _verify_land_coverage(conn: duckdb.DuckDBPyConnection) -> None:
     else:
         logger.info("land coverage: 47都道府県すべてに地価データあり")
 
-    total = conn.execute(f"SELECT count(*) FROM {LAND_TABLE}").fetchone()[0]
+    total = conn.execute(
+        "SELECT count(*) FROM reinfolib.main.mart_land_prices"
+    ).fetchone()[0]
     logger.info("land coverage: 総地点数(全年) %d", total)
 
 
