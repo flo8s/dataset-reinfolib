@@ -20,6 +20,7 @@ from itertools import product
 import duckdb
 import pyarrow as pa
 from dbt.cli.main import dbtRunner
+from queria import Secret
 from reinfolib import ReinfolibClient
 
 logger = logging.getLogger(__name__)
@@ -47,9 +48,6 @@ LAND_START_YEAR = 1995
 # 持たない。区切って毎日少しずつ回し、どのビルドも必ず publish まで到達させる。
 LAND_BUDGET_SECONDS = 30 * 60
 
-# 一時認証情報を撃ち直す間隔。既定の TTL は 15 分。
-SECRET_REFRESH_SECONDS = 5 * 60
-
 # 走査タイルは、日本列島を包含する少数の大矩形 (lon_min, lat_min, lon_max, lat_max)
 # から z=13 タイルへ展開した和集合。各矩形は四隅がすべて海上にあり陸地を完全に含むため、
 # 端の取りこぼしが原理的に起きない。海上の空タイルは取得時に skip する。
@@ -62,45 +60,8 @@ LAND_BBOXES: list[tuple[float, float, float, float]] = [
 ]
 
 
-class _S3Secret:
-    """ストレージへ書くための一時認証情報。切れ目で明示的に取り直す。
-
-    値そのものは持たず、`credential_process` (queria) を走らせる形で渡すので鍵は
-    どこにも置かれない。ただし `REFRESH auto` は credential_process が返す
-    Expiration を見ないため、撃ち直さない限り値は古いままになる。取り込みは
-    認証情報の寿命より長く走るので、トランザクションの外で定期的に撃ち直す。
-    """
-
-    def __init__(self, conn: duckdb.DuckDBPyConnection, *, enabled: bool) -> None:
-        self._conn = conn
-        self._enabled = enabled
-        self._issued_at = 0.0
-        if enabled:
-            self.issue()
-
-    def issue(self) -> None:
-        use_ssl = "false" if os.environ.get("QUERIA_S3_USE_SSL") == "false" else "true"
-        self._conn.execute(
-            "CREATE OR REPLACE SECRET reinfolib_s3 (TYPE s3, "
-            "PROVIDER credential_chain, CHAIN 'process', REFRESH auto, "
-            f"ENDPOINT ?, URL_STYLE 'path', REGION ?, USE_SSL {use_ssl})",
-            [
-                os.environ["QUERIA_S3_ENDPOINT_HOST"],
-                os.environ.get("QUERIA_S3_REGION", "auto"),
-            ],
-        )
-        self._issued_at = time.monotonic()
-
-    def reissue_if_stale(self) -> None:
-        """トランザクションの切れ目で呼ぶ。実行中の文をまたいで撃たない。"""
-        if not self._enabled:
-            return
-        if time.monotonic() - self._issued_at >= SECRET_REFRESH_SECONDS:
-            self.issue()
-
-
 @contextmanager
-def _ducklake_connect() -> Generator[tuple[duckdb.DuckDBPyConnection, _S3Secret]]:
+def _ducklake_connect() -> Generator[tuple[duckdb.DuckDBPyConnection, Secret]]:
     """Open a fresh DuckDB session with the queria-managed DuckLake attached.
 
     Uses the ``QUERIA_*`` environment variables injected by ``queria run``: the local
@@ -119,7 +80,8 @@ def _ducklake_connect() -> Generator[tuple[duckdb.DuckDBPyConnection, _S3Secret]
             conn.execute("INSTALL httpfs; LOAD httpfs;")
             # credential_chain はこの拡張にある
             conn.execute("INSTALL aws; LOAD aws;")
-        secret = _S3Secret(conn, enabled=is_s3)
+        secret = Secret(conn)
+        secret.install()
         conn.execute(
             f"ATTACH 'ducklake:{catalog_path}' AS reinfolib "
             f"(DATA_PATH '{data_url}', OVERRIDE_DATA_PATH true, "
@@ -175,7 +137,7 @@ def main() -> None:
 def ingest_trade_prices(
     conn: duckdb.DuckDBPyConnection,
     client: ReinfolibClient,
-    secret: _S3Secret,
+    secret: Secret,
     *,
     areas: list[str],
     quarters: list[YearQuarter],
@@ -219,7 +181,7 @@ def ingest_trade_prices(
         conn.execute(f"INSERT INTO {TABLE} SELECT * FROM _batch")
         conn.execute("COMMIT")
         conn.unregister("_batch")
-        secret.reissue_if_stale()
+        secret.refresh_if_due()
 
         logger.info("XIT001 area=%s %dQ%d: %d rows", area, year, quarter, len(rows))
 
@@ -306,7 +268,7 @@ def _latest_land_year(client: ReinfolibClient) -> int:
 def discover_land_price_tiles(
     conn: duckdb.DuckDBPyConnection,
     client: ReinfolibClient,
-    secret: _S3Secret,
+    secret: Secret,
     *,
     year: int,
 ) -> list[tuple[int, int]]:
@@ -354,7 +316,7 @@ def discover_land_price_tiles(
         if (i + 1) % 1000 == 0:
             _checkpoint_tiles(conn, batch, i + 1, len(scan))
             batch = []
-            secret.reissue_if_stale()
+            secret.refresh_if_due()
             n = conn.execute(f"SELECT count(*) FROM {LAND_TILES_TABLE}").fetchone()[0]
             logger.info("  scanned %d/%d, found %d", i + 1, len(scan), n)
     _checkpoint_tiles(conn, batch, len(scan), len(scan))
@@ -421,7 +383,7 @@ def _known_land_tiles(conn: duckdb.DuckDBPyConnection) -> list[tuple[int, int]]:
 def ingest_land_prices(
     conn: duckdb.DuckDBPyConnection,
     client: ReinfolibClient,
-    secret: _S3Secret,
+    secret: Secret,
     *,
     tiles: list[tuple[int, int]],
     years: list[int],
@@ -481,7 +443,7 @@ def ingest_land_prices(
         written += len(rows)
         if (done + 1) % 100 == 0:
             _save_tile_state(conn, state)
-            secret.reissue_if_stale()
+            secret.refresh_if_due()
             logger.info("  tiles %d/%d, rows %d", done + 1, len(queue), written)
     _save_tile_state(conn, state)
 
